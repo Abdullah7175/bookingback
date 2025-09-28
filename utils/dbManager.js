@@ -2,7 +2,7 @@
 import Booking from "../models/Booking.js";
 import Inquiry from "../models/Inquiry.js";
 import Agent from "../models/Agent.js";
-import Company from "../models/Company.js";
+import Company from "../models/company.js";
 
 /**
  * For now this returns the shared models.
