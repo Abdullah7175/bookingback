@@ -1,15 +1,111 @@
 import mongoose from "mongoose";
 
-const bookingSchema = new mongoose.Schema(
+const VisaPassengerSchema = new mongoose.Schema(
   {
+    fullName: String,
+    nationality: String,
+    visaType: { type: String, enum: ["Tourist", "Umrah"] },
+  },
+  { _id: false }
+);
+
+const TransportLegSchema = new mongoose.Schema(
+  {
+    from: String,
+    to: String,
+    vehicleType: { type: String, enum: ["Sedan", "SUV", "GMC", "COSTER", "BUS"] },
+    date: String, // store as ISO string for simplicity
+    time: String,
+  },
+  { _id: false }
+);
+
+const CostRowSchema = new mongoose.Schema(
+  {
+    item: String,
+    quantity: Number,
+    costPerQty: Number,
+    salePerQty: Number,
+  },
+  { _id: false }
+);
+
+const InstallmentItemSchema = new mongoose.Schema(
+  {
+    no: Number,
+    date: String,
+    amount: Number,
+  },
+  { _id: false }
+);
+
+const BookingSchema = new mongoose.Schema(
+  {
+    // ORIGINAL CORE FIELDS (kept)
     customerName: { type: String, required: true },
     customerEmail: { type: String, required: true },
     package: { type: String, required: true },
     date: { type: Date, required: true },
-    status: { type: String, enum: ["pending", "confirmed", "cancelled"], default: "pending" },
+    status: {
+      type: String,
+      enum: ["pending", "confirmed", "cancelled"],
+      default: "pending",
+    },
     agent: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+
+    // NEW FIELDS FROM REVISION
+    pnr: { type: String, minlength: 6, maxlength: 6 }, // optional at DB level; validate in controller when required
+
+    flights: {
+      raw: String,           // pasted text
+      itineraryLines: [String],
+    },
+
+    hotels: [
+      {
+        name: String,
+        checkIn: String,     // store ISO (or use Date if you prefer)
+        checkOut: String,
+      },
+    ],
+
+    visas: {
+      count: Number,
+      passengers: [VisaPassengerSchema],
+    },
+
+    transportation: {
+      count: Number,
+      legs: [TransportLegSchema],
+    },
+
+    costing: {
+      rows: [CostRowSchema],
+      totals: {
+        totalCost: Number,
+        totalSale: Number,
+        profit: Number,
+      },
+    },
+
+    flightPayments: {
+      mode: { type: String, enum: ["credit-card", "installment"] },
+      creditCard: {
+        amount: Number,
+        paidOn: String,
+      },
+      installment: {
+        ticketTotal: Number,
+        advancePaid: Number,
+        numberOfInstallments: Number,
+        startDate: String,
+        remaining: Number,
+        perInstallment: Number,
+        schedule: [InstallmentItemSchema],
+      },
+    },
   },
   { timestamps: true }
 );
 
-export default mongoose.model("Booking", bookingSchema);
+export default mongoose.model("Booking", BookingSchema);
