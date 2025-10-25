@@ -90,12 +90,15 @@ export const getBookingPdf = async (req, res) => {
     }
   }
 
-  // Hotels Information - handle actual stored structure
-  if (booking.hotels && booking.hotels.length > 0) {
+  // Hotels Information - handle both legacy (hotel) and new (hotels) structures
+  const hotelsToShow = (booking.hotels && booking.hotels.length > 0) ? booking.hotels : 
+                      (booking.hotel ? [booking.hotel] : []);
+  
+  if (hotelsToShow.length > 0) {
     doc.fontSize(14).text("Hotel Details", { underline: true });
     doc.moveDown();
     
-    booking.hotels.forEach((hotel, index) => {
+    hotelsToShow.forEach((hotel, index) => {
       doc.fontSize(10).text(`Hotel ${index + 1}:`);
       doc.fontSize(9).text(`  Name: ${hotel.hotelName || hotel.name || "—"}`);
       doc.fontSize(9).text(`  Room Type: ${hotel.roomType || "—"}`);
@@ -105,13 +108,16 @@ export const getBookingPdf = async (req, res) => {
     });
   }
 
-  // Visa Information - handle actual stored structure
-  const visaPassengers = booking.visas?.passengers || booking.visas || [];
+  // Visa Information - handle both legacy (visa) and new (visas) structures
+  const visaPassengers = booking.visas?.passengers || 
+                        (Array.isArray(booking.visas) ? booking.visas : []) ||
+                        (booking.visa ? [booking.visa] : []);
+  
   if (visaPassengers && visaPassengers.length > 0) {
     doc.fontSize(14).text("Visa Details", { underline: true });
     doc.moveDown();
     
-    doc.fontSize(10).text(`Total Visas: ${booking.visas?.count || visaPassengers.length}`);
+    doc.fontSize(10).text(`Total Visas: ${visaPassengers.length}`);
     doc.moveDown(0.5);
     
     visaPassengers.forEach((passenger, index) => {
