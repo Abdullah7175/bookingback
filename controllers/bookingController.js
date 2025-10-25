@@ -21,6 +21,7 @@ export const getBookingPdf = async (req, res) => {
     return res.status(404).json({ message: "Booking not found" });
   }
 
+
   // RBAC: admin or owner
   if (
     req.user.role !== "admin" &&
@@ -89,7 +90,7 @@ export const getBookingPdf = async (req, res) => {
     }
   }
 
-  // Hotels Information
+  // Hotels Information - handle actual stored structure
   if (booking.hotels && booking.hotels.length > 0) {
     doc.fontSize(14).text("Hotel Details", { underline: true });
     doc.moveDown();
@@ -104,7 +105,7 @@ export const getBookingPdf = async (req, res) => {
     });
   }
 
-  // Visa Information - handle both structures
+  // Visa Information - handle actual stored structure
   const visaPassengers = booking.visas?.passengers || booking.visas || [];
   if (visaPassengers && visaPassengers.length > 0) {
     doc.fontSize(14).text("Visa Details", { underline: true });
@@ -122,7 +123,7 @@ export const getBookingPdf = async (req, res) => {
     });
   }
 
-  // Transportation Information - handle both structures
+  // Transportation Information - handle actual stored structure
   const transportLegs = booking.transportation?.legs || booking.transport?.legs || [];
   if (transportLegs && transportLegs.length > 0) {
     doc.fontSize(14).text("Transportation Details", { underline: true });
@@ -148,14 +149,14 @@ export const getBookingPdf = async (req, res) => {
     doc.moveDown();
   }
 
-  // Costing Information - handle both structures
+  // Costing Information - handle actual stored structure
   const costingRows = booking.costing?.rows || booking.pricing?.table || [];
   if (costingRows && costingRows.length > 0) {
     doc.fontSize(14).text("Costing Details", { underline: true });
     doc.moveDown();
     
     costingRows.forEach((row, index) => {
-      doc.fontSize(10).text(`${row.item || row.label || "Item " + (index + 1)}:`);
+      doc.fontSize(10).text(`${row.label || row.item || "Item " + (index + 1)}:`);
       doc.fontSize(9).text(`  Quantity: ${row.quantity || 0}`);
       doc.fontSize(9).text(`  Cost per Qty: ${row.costPerQty || 0}`);
       doc.fontSize(9).text(`  Sale per Qty: ${row.salePerQty || 0}`);
@@ -163,11 +164,11 @@ export const getBookingPdf = async (req, res) => {
     });
     
     // Show totals from either structure
-    const totals = booking.costing?.totals || booking.pricing?.totals || {};
-    if (totals.totalCost || totals.totalSale || totals.totalCostPrice || totals.totalSalePrice) {
+    const totals = booking.pricing?.totals || booking.costing?.totals || {};
+    if (totals.totalCostPrice || totals.totalSalePrice || totals.totalCost || totals.totalSale) {
       doc.fontSize(10).text("Totals:", { underline: true });
-      doc.fontSize(9).text(`  Total Cost: ${totals.totalCost || totals.totalCostPrice || 0}`);
-      doc.fontSize(9).text(`  Total Sale: ${totals.totalSale || totals.totalSalePrice || 0}`);
+      doc.fontSize(9).text(`  Total Cost: ${totals.totalCostPrice || totals.totalCost || 0}`);
+      doc.fontSize(9).text(`  Total Sale: ${totals.totalSalePrice || totals.totalSale || 0}`);
       doc.fontSize(9).text(`  Profit: ${totals.profit || 0}`);
       doc.moveDown();
     }
