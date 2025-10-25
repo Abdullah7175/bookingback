@@ -1,91 +1,83 @@
-// server.js (ESM)
+ 
 import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
-import morgan from "morgan";
-import colors from "colors";
-import helmet from "helmet";
-import rateLimit from "express-rate-limit";
+import jwt from "jsonwebtoken";
+
 import connectDB from "./config/db.js";
+import { loginUser } from "./controllers/authController.js";
+import User from "./models/User.js";
 
-import { notFound, errorHandler } from "./middleware/errorMiddleware.js";
-import { protect } from "./middleware/authMiddleware.js";
-// import { ensureCompany } from "./middleware/companyContext.js";
-
+// Routers
 import authRoutes from "./routes/authRoutes.js";
 import bookingRoutes from "./routes/bookingRoutes.js";
 import inquiryRoutes from "./routes/inquiryRoutes.js";
 import agentRoutes from "./routes/agentRoutes.js";
 import analyticsRoutes from "./routes/analyticsRoutes.js";
-// import pdfRoutes from "./routes/pdfRoutes.js";
+
 dotenv.config();
-connectDB();
+await connectDB();
 
 const app = express();
-app.disable("etag");
-
-// Security & rate limiting
-app.use(helmet());
-const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 200 });
-app.use(limiter);
-
-// Core middleware
 app.use(express.json());
-app.use(
-  cors({
-    origin: process.env.CLIENT_ORIGIN || "http://localhost:5173",
-    credentials: true,
-  })
-);
-app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
-app.use((req, res, next) => {
-  if (req.path.startsWith("/api/")) {
-    res.set("Cache-Control", "no-store"); // don't cache at all
-    res.set("Pragma", "no-cache");
-    res.set("Expires", "0");
+
+// ---- CORS ----
+const allowed = (process.env.CORS_ORIGIN || process.env.CLIENT_ORIGIN || "")
+  .split(",").map(s => s.trim()).filter(Boolean);
+
+app.use((req,res,next)=>{ res.setHeader("Vary","Origin"); next(); });
+app.use(cors({
+  origin(origin, cb) {
+    if (!origin) return cb(null, true);
+    if (!allowed.length) return cb(null, true);
+    return allowed.includes(origin) ? cb(null, true) : cb(new Error("CORS"));
+  },
+  credentials: true,
+  methods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization","Expires","Cache-Control","Pragma"]
+}));
+
+// ---- Health
+app.get("/health", (_req,res)=> res.status(200).json({ ok: true }));
+// ---- Minimal auth helper for /me endpoints
+const auth = (req,res,next)=>{
+  const h = req.headers.authorization || "";
+  const token = h.startsWith("Bearer ") ? h.slice(7) : null;
+  if (!token) return res.status(401).json({ message: "Not authorized" });
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.userId = decoded.id;
+    next();
+  } catch {
+    return res.status(401).json({ message: "Token invalid" });
   }
-  next();
+};
+
+// ---- Routes
+// Keep inline login (safe), plus mount full auth router
+app.post("/api/auth/login", loginUser);
+app.post("/api/agent/login", loginUser); // some UIs call this
+
+// "me" endpoints needed by the UI
+app.get("/api/auth/me", auth, async (req,res)=>{
+  const u = await User.findById(req.userId).lean();
+  if (!u) return res.status(404).json({ message: "User not found" });
+  res.json({ id: u._id, name: u.name, email: u.email, role: u.role });
 });
-// Optional: quick origin logger to help with CORS/debug
-app.use((req, _res, next) => {
-  if (process.env.NODE_ENV !== "production") {
-    if (req.headers.origin) console.log("🌐 Request from origin:", req.headers.origin);
-  }
-  next();
+app.get("/api/agent/me", auth, async (req,res)=>{
+  const u = await User.findById(req.userId).lean();
+  if (!u) return res.status(404).json({ message: "User not found" });
+  res.json({ id: u._id, name: u.name, email: u.email, role: u.role });
 });
 
-// Health check
-app.get("/", (_req, res) => {
-  res.status(200).json({
-    message: "API is running...",
-    environment: process.env.NODE_ENV,
-  });
-});
-
-// ---------- Routes ----------
-
-// Auth routes (NO protect here so /api/auth/login works)
+// Mount full feature routers (bookings, inquiries, agents, analytics)
 app.use("/api/auth", authRoutes);
-
-// Agent routes (leave unprotected if they include /api/agent/login inside)
-app.use("/api/agent", agentRoutes);
-
-// Company-scoped routes (require user + company)
 app.use("/api/bookings", bookingRoutes);
 app.use("/api/inquiries", inquiryRoutes);
-
-// Other routes (protect only if needed)
+app.use("/api/agent", agentRoutes);
 app.use("/api/analytics", analyticsRoutes);
-// app.use("/api/pdf", pdfRoutes);
 
-// 404 + Error handlers (MUST be last)
-app.use(notFound);
-app.use(errorHandler);
+const PORT = Number(process.env.PORT) || 7000;
 
-// Start server
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(
-    `Server running in ${process.env.NODE_ENV} mode on port ${PORT}`.bgMagenta.white
-  );
-});
+const HOST = process.env.HOST || "0.0.0.0";
+app.listen(PORT, HOST, () => console.log(`Server running on http://${HOST}:${PORT}`)); 
