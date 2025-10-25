@@ -96,39 +96,42 @@ export const getBookingPdf = async (req, res) => {
     
     booking.hotels.forEach((hotel, index) => {
       doc.fontSize(10).text(`Hotel ${index + 1}:`);
-      doc.fontSize(9).text(`  Name: ${hotel.name || "—"}`);
+      doc.fontSize(9).text(`  Name: ${hotel.hotelName || hotel.name || "—"}`);
+      doc.fontSize(9).text(`  Room Type: ${hotel.roomType || "—"}`);
       doc.fontSize(9).text(`  Check-in: ${hotel.checkIn || "—"}`);
       doc.fontSize(9).text(`  Check-out: ${hotel.checkOut || "—"}`);
       doc.moveDown(0.5);
     });
   }
 
-  // Visa Information
-  if (booking.visas && booking.visas.passengers && booking.visas.passengers.length > 0) {
+  // Visa Information - handle both structures
+  const visaPassengers = booking.visas?.passengers || booking.visas || [];
+  if (visaPassengers && visaPassengers.length > 0) {
     doc.fontSize(14).text("Visa Details", { underline: true });
     doc.moveDown();
     
-    doc.fontSize(10).text(`Total Visas: ${booking.visas.count || booking.visas.passengers.length}`);
+    doc.fontSize(10).text(`Total Visas: ${booking.visas?.count || visaPassengers.length}`);
     doc.moveDown(0.5);
     
-    booking.visas.passengers.forEach((passenger, index) => {
+    visaPassengers.forEach((passenger, index) => {
       doc.fontSize(10).text(`Passenger ${index + 1}:`);
-      doc.fontSize(9).text(`  Name: ${passenger.fullName || "—"}`);
+      doc.fontSize(9).text(`  Name: ${passenger.name || passenger.fullName || "—"}`);
       doc.fontSize(9).text(`  Nationality: ${passenger.nationality || "—"}`);
       doc.fontSize(9).text(`  Visa Type: ${passenger.visaType || "—"}`);
       doc.moveDown(0.5);
     });
   }
 
-  // Transportation Information
-  if (booking.transportation && booking.transportation.legs && booking.transportation.legs.length > 0) {
+  // Transportation Information - handle both structures
+  const transportLegs = booking.transportation?.legs || booking.transport?.legs || [];
+  if (transportLegs && transportLegs.length > 0) {
     doc.fontSize(14).text("Transportation Details", { underline: true });
     doc.moveDown();
     
-    doc.fontSize(10).text(`Total Legs: ${booking.transportation.count || booking.transportation.legs.length}`);
+    doc.fontSize(10).text(`Total Legs: ${booking.transportation?.count || booking.transport?.count || transportLegs.length}`);
     doc.moveDown(0.5);
     
-    booking.transportation.legs.forEach((leg, index) => {
+    transportLegs.forEach((leg, index) => {
       doc.fontSize(10).text(`Leg ${index + 1}:`);
       doc.fontSize(9).text(`  From: ${leg.from || "—"}`);
       doc.fontSize(9).text(`  To: ${leg.to || "—"}`);
@@ -137,28 +140,55 @@ export const getBookingPdf = async (req, res) => {
       doc.fontSize(9).text(`  Time: ${leg.time || "—"}`);
       doc.moveDown(0.5);
     });
+  } else if (booking.transport?.transportType || booking.transport?.pickupLocation) {
+    doc.fontSize(14).text("Transportation Details", { underline: true });
+    doc.moveDown();
+    doc.fontSize(10).text(`Type: ${booking.transport?.transportType || "—"}`);
+    doc.fontSize(10).text(`Pickup: ${booking.transport?.pickupLocation || "—"}`);
+    doc.moveDown();
   }
 
-  // Costing Information
-  if (booking.costing && booking.costing.rows && booking.costing.rows.length > 0) {
+  // Costing Information - handle both structures
+  const costingRows = booking.costing?.rows || booking.pricing?.table || [];
+  if (costingRows && costingRows.length > 0) {
     doc.fontSize(14).text("Costing Details", { underline: true });
     doc.moveDown();
     
-    booking.costing.rows.forEach((row, index) => {
-      doc.fontSize(10).text(`${row.item || "Item " + (index + 1)}:`);
+    costingRows.forEach((row, index) => {
+      doc.fontSize(10).text(`${row.item || row.label || "Item " + (index + 1)}:`);
       doc.fontSize(9).text(`  Quantity: ${row.quantity || 0}`);
       doc.fontSize(9).text(`  Cost per Qty: ${row.costPerQty || 0}`);
       doc.fontSize(9).text(`  Sale per Qty: ${row.salePerQty || 0}`);
       doc.moveDown(0.5);
     });
     
-    if (booking.costing.totals) {
+    // Show totals from either structure
+    const totals = booking.costing?.totals || booking.pricing?.totals || {};
+    if (totals.totalCost || totals.totalSale || totals.totalCostPrice || totals.totalSalePrice) {
       doc.fontSize(10).text("Totals:", { underline: true });
-      doc.fontSize(9).text(`  Total Cost: ${booking.costing.totals.totalCost || 0}`);
-      doc.fontSize(9).text(`  Total Sale: ${booking.costing.totals.totalSale || 0}`);
-      doc.fontSize(9).text(`  Profit: ${booking.costing.totals.profit || 0}`);
+      doc.fontSize(9).text(`  Total Cost: ${totals.totalCost || totals.totalCostPrice || 0}`);
+      doc.fontSize(9).text(`  Total Sale: ${totals.totalSale || totals.totalSalePrice || 0}`);
+      doc.fontSize(9).text(`  Profit: ${totals.profit || 0}`);
       doc.moveDown();
     }
+  }
+
+  // Passenger Information
+  if (booking.passengers || booking.adults || booking.children) {
+    doc.fontSize(14).text("Passenger Details", { underline: true });
+    doc.moveDown();
+    doc.fontSize(10).text(`Total Passengers: ${booking.passengers || "—"}`);
+    doc.fontSize(10).text(`Adults: ${booking.adults || "—"}`);
+    doc.fontSize(10).text(`Children: ${booking.children || "—"}`);
+    doc.moveDown();
+  }
+
+  // Additional Services
+  if (booking.additionalServices) {
+    doc.fontSize(14).text("Additional Services", { underline: true });
+    doc.moveDown();
+    doc.fontSize(10).text(booking.additionalServices);
+    doc.moveDown();
   }
 
   // Flight Payment Information
