@@ -20,11 +20,11 @@ const router = express.Router();
 // Public login
 router.post("/login", loginAgent);
 
-// Register agent (admin-only, company-scoped)
-router.post("/register", protect, admin, ensureCompany(true), registerAgent);
+// Register agent (admin-only, no company requirement for single-tenant)
+router.post("/register", protect, admin, registerAgent);
 
-// Team performance (admin-only, company-scoped) ⬅️ added ensureCompany(true)
-router.get("/performance", protect, admin, ensureCompany(true), getAgentPerformance);
+// Team performance (admin-only, no company requirement for single-tenant)
+router.get("/performance", protect, admin, getAgentPerformance);
 
 /** ---------- Validate :id once for all dynamic routes ---------- **/
 router.param("id", (req, res, next, id) => {

@@ -35,9 +35,28 @@ export const protect = asyncHandler(async (req, res, next) => {
     throw new Error("Not authorized, token invalid");
   }
 
-  // Load user and ensure company is included
-  const user = await User.findById(decoded.id)
-    .select("_id name email role company createdAt updatedAt"); // <-- includes company
+  // Try loading from User first, then Agent
+  let user = await User.findById(decoded.id)
+    .select("_id name email role company createdAt updatedAt");
+
+  // If not found in User, try Agent model
+  if (!user) {
+    const { default: Agent } = await import("../models/Agent.js");
+    const agent = await Agent.findById(decoded.id)
+      .select("_id name email role phone username department monthlyTarget commissionRate createdAt updatedAt");
+    if (agent) {
+      // Convert agent to user-like format
+      user = {
+        _id: agent._id,
+        name: agent.name,
+        email: agent.email,
+        role: agent.role || "agent",
+        company: null,
+        createdAt: agent.createdAt,
+        updatedAt: agent.updatedAt,
+      };
+    }
+  }
 
   if (!user) {
     res.status(401);

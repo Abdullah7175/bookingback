@@ -13,7 +13,7 @@ const TransportLegSchema = new mongoose.Schema(
   {
     from: String,
     to: String,
-    vehicleType: { type: String, enum: ["Sedan", "SUV", "GMC", "COSTER", "BUS"] },
+    vehicleType: { type: String, enum: ["Sedan", "SUV", "GMC", "Coaster", "COSTER", "BUS"] },
     date: String, // store as ISO string for simplicity
     time: String,
   },
@@ -51,7 +51,54 @@ const BookingSchema = new mongoose.Schema(
       enum: ["pending", "confirmed", "cancelled"],
       default: "pending",
     },
-    agent: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    agent: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: false },
+
+    // LEGACY FIELDS (for backward compatibility)
+    contactNumber: String,
+    passengers: String,
+    adults: String,
+    children: String,
+    departureDate: Date,
+    returnDate: Date,
+    packagePrice: String,
+    additionalServices: String,
+    amount: Number,
+    approvalStatus: String,
+    customerGroup: String,
+    
+    // Legacies
+    hotel: {
+      name: String,
+      hotelName: String,
+      roomType: String,
+      checkIn: Date,
+      checkOut: Date,
+    },
+    visa: {
+      visaType: String,
+      passportNumber: String,
+      nationality: String,
+    },
+    transport: {
+      transportType: String,
+      pickupLocation: String,
+      legs: [TransportLegSchema],
+    },
+    flight: {
+      departureCity: String,
+      arrivalCity: String,
+      flightClass: String,
+      pnr: String,
+      itinerary: String,
+      departureDate: Date,
+      returnDate: Date,
+    },
+    payment: {
+      method: String,
+      cardLast4: String,
+      cardholderName: String,
+      expiryDate: String,
+    },
 
     // NEW FIELDS FROM REVISION
     pnr: { type: String, minlength: 6, maxlength: 6 }, // optional at DB level; validate in controller when required

@@ -8,6 +8,8 @@ import {
   deleteBooking,
   getMyBookings,
   getBookingPdf, // <-- make sure this is exported from your controller
+  approveBooking,
+  rejectBooking,
 } from "../controllers/bookingController.js";
 import { protect, admin } from "../middleware/authMiddleware.js";
 
@@ -32,5 +34,9 @@ router
   .get(protect, getBookingById) // admin or owner
   .put(protect, updateBooking)  // admin or owner
   .delete(protect, deleteBooking); // admin or owner
+
+// Approve/Reject routes (must come AFTER /:id routes to avoid conflicts)
+router.put("/:id/approve", protect, admin, approveBooking);
+router.put("/:id/reject", protect, admin, rejectBooking);
 
 export default router;

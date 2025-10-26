@@ -100,7 +100,7 @@ export const getBookingPdf = async (req, res) => {
     
     hotelsToShow.forEach((hotel, index) => {
       doc.fontSize(10).text(`Hotel ${index + 1}:`);
-      doc.fontSize(9).text(`  Name: ${hotel.hotelName || hotel.name || "—"}`);
+      doc.fontSize(9).text(`  Name: ${hotel.name || hotel.hotelName || "—"}`);
       doc.fontSize(9).text(`  Room Type: ${hotel.roomType || "—"}`);
       doc.fontSize(9).text(`  Check-in: ${hotel.checkIn || "—"}`);
       doc.fontSize(9).text(`  Check-out: ${hotel.checkOut || "—"}`);
@@ -240,6 +240,7 @@ export const createBooking = async (req, res) => {
       customerEmail,
       package: pkg,
       date,
+      agent, // Accept agent from request body (for admin creating bookings for other agents)
 
       // new (revision)
       pnr,
@@ -265,13 +266,16 @@ export const createBooking = async (req, res) => {
       }
     }
 
+    // Use agent from request body if provided (for admin), otherwise use logged-in user's ID
+    const agentId = agent || req.user._id;
+
     const booking = await Booking.create({
       customerName,
       customerEmail,
       package: pkg,
       date,
       status: status || "pending",
-      agent: req.user._id, // from protect middleware
+      agent: agentId,
 
       // revision sections (optional)
       pnr: pnr ? String(pnr).toUpperCase() : undefined,
@@ -338,7 +342,8 @@ export const updateBooking = async (req, res) => {
   const booking = await Booking.findById(req.params.id);
   if (!booking) return res.status(404).json({ message: "Booking not found" });
 
-  const isOwner = String(booking.agent) === String(req.user._id);
+  // Allow update if user is admin, or if booking has an agent that matches user, or if booking has no agent
+  const isOwner = booking.agent ? String(booking.agent) === String(req.user._id) : req.user.role === "admin";
   if (req.user.role !== "admin" && !isOwner) {
     return res.status(403).json({ message: "Not authorized" });
   }
@@ -369,9 +374,26 @@ export const updateBooking = async (req, res) => {
   if (req.body.visas !== undefined) booking.visas = req.body.visas;
   if (req.body.transportation !== undefined)
     booking.transportation = req.body.transportation;
+  if (req.body.transport !== undefined) booking.transport = req.body.transport; // Legacy transport field
   if (req.body.costing !== undefined) booking.costing = req.body.costing;
   if (req.body.flightPayments !== undefined)
     booking.flightPayments = req.body.flightPayments;
+  
+  // HOTEL LEGACY FIELD
+  if (req.body.hotel !== undefined) booking.hotel = req.body.hotel;
+  if (req.body.visa !== undefined) booking.visa = req.body.visa;
+
+  // ADDITIONAL FIELDS
+  if (req.body.passengers !== undefined) booking.passengers = req.body.passengers;
+  if (req.body.adults !== undefined) booking.adults = req.body.adults;
+  if (req.body.children !== undefined) booking.children = req.body.children;
+  if (req.body.contactNumber !== undefined) booking.contactNumber = req.body.contactNumber;
+  if (req.body.departureDate !== undefined) booking.departureDate = req.body.departureDate;
+  if (req.body.returnDate !== undefined) booking.returnDate = req.body.returnDate;
+  if (req.body.packagePrice !== undefined) booking.packagePrice = req.body.packagePrice;
+  if (req.body.additionalServices !== undefined) booking.additionalServices = req.body.additionalServices;
+  if (req.body.amount !== undefined) booking.amount = req.body.amount;
+  if (req.body.approvalStatus !== undefined) booking.approvalStatus = req.body.approvalStatus;
 
   const updatedBooking = await booking.save();
   res.json(updatedBooking);
@@ -410,5 +432,57 @@ export const getMyBookings = async (req, res) => {
     res.json(bookings);
   } catch (error) {
     res.status(500).json({ message: "Server error" });
+  }
+};
+
+// --------------------------------- APPROVE -----------------------------------
+/**
+ * @desc    Approve a booking (Admin only)
+ * @route   PUT /api/bookings/:id/approve
+ * @access  Private/Admin
+ */
+export const approveBooking = async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) return res.status(404).json({ message: "Booking not found" });
+
+    // Only admin can approve
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    booking.approvalStatus = "approved";
+    booking.status = "confirmed";
+    await booking.save();
+
+    res.json({ success: true, message: "Booking approved", booking });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Server error" });
+  }
+};
+
+// --------------------------------- REJECT -----------------------------------
+/**
+ * @desc    Reject a booking (Admin only)
+ * @route   PUT /api/bookings/:id/reject
+ * @access  Private/Admin
+ */
+export const rejectBooking = async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) return res.status(404).json({ message: "Booking not found" });
+
+    // Only admin can reject
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    booking.approvalStatus = "rejected";
+    booking.status = "cancelled";
+    await booking.save();
+
+    res.json({ success: true, message: "Booking rejected", booking });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Server error" });
   }
 };

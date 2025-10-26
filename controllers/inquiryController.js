@@ -18,7 +18,13 @@ export const getInquiries = async (req, res) => {
   try {
     let filter = {};
     if (req.user.role === "agent") {
-      filter = { assignedAgent: req.user._id };
+      // Agents can see inquiries assigned to them (in User or Agent model)
+      filter = { 
+        $or: [
+          { assignedAgent: req.user._id },
+          // Also check for inquiries created by this agent (if inquiry has a creator field)
+        ]
+      };
     }
 
     const inquiries = await Inquiry.find(filter)

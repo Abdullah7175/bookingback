@@ -9,17 +9,16 @@ const agentSchema = mongoose.Schema(
     role: { type: String, default: "agent" },
     phone: { type: String },
     isActive: { type: Boolean, default: true },
+    // Additional fields from frontend
+    username: { type: String },
+    department: { type: String },
+    monthlyTarget: { type: Number, default: 5000 },
+    commissionRate: { type: Number, default: 5.0 },
   },
   { timestamps: true }
 );
 
-// Password hashing middleware
-agentSchema.pre("save", async function (next) {
-  if (!this.isModified("passwordHash")) return next();
-  const salt = await bcrypt.genSalt(10);
-  this.passwordHash = await bcrypt.hash(this.passwordHash, salt);
-  next();
-});
+// Password hashing is done in the controller before save
 
 // Method to compare passwords
 agentSchema.methods.matchPassword = async function (enteredPassword) {

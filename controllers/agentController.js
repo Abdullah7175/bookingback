@@ -12,6 +12,14 @@ const registerSchema = Joi.object({
   email: Joi.string().email().required(),
   password: Joi.string().min(6).required(),
   phone: Joi.string().allow("", null),
+  username: Joi.string().allow("", null),
+  department: Joi.string().allow("", null),
+  monthlyTarget: Joi.number().optional(),
+  commissionRate: Joi.number().optional(),
+  firstName: Joi.string().optional(),
+  lastName: Joi.string().optional(),
+  role: Joi.string().optional(),
+  isActive: Joi.boolean().optional(),
   upsert: Joi.boolean().optional() // allow in body or ?upsert=true
 });
 
@@ -26,6 +34,10 @@ const sanitize = (u) => ({
   email: u.email,
   role: u.role,
   phone: u.phone ?? null,
+  username: u.username ?? null,
+  department: u.department ?? null,
+  monthlyTarget: u.monthlyTarget ?? 5000,
+  commissionRate: u.commissionRate ?? 5.0,
   company: u.company ?? null,
   createdAt: u.createdAt,
   updatedAt: u.updatedAt,
@@ -47,8 +59,8 @@ export const registerAgent = async (req, res) => {
       });
     }
 
-    const companyId = req.companyId || req.user?.company || null;
-    const query = companyId ? { email: value.email, company: companyId } : { email: value.email };
+    // Single-tenant: no company filtering
+    const query = { email: value.email };
 
     let agent = await Agent.findOne(query).select("+passwordHash");
     if (agent) {
@@ -60,7 +72,7 @@ export const registerAgent = async (req, res) => {
         return res.status(200).json({
           ...sanitize(agent),
           updated: true,
-          token: generateToken(agent._id, agent.role),
+          token: generateToken({ _id: agent._id, role: agent.role }),
         });
       }
       return res.status(409).json({
@@ -76,13 +88,17 @@ export const registerAgent = async (req, res) => {
       phone: value.phone || undefined,
       role: "agent",
       passwordHash,
-      company: companyId || undefined,
+      // Additional optional fields
+      username: value.username || undefined,
+      department: value.department || undefined,
+      monthlyTarget: value.monthlyTarget || 5000,
+      commissionRate: value.commissionRate || 5.0,
     });
 
     return res.status(201).json({
       ...sanitize(agent),
       created: true,
-      token: generateToken(agent._id, agent.role),
+      token: generateToken({ _id: agent._id, role: agent.role }),
     });
   } catch (e) {
     if (e?.code === 11000) {
@@ -109,7 +125,7 @@ export const loginAgent = async (req, res) => {
     if (!ok) return res.status(401).json({ message: "Invalid email or password" });
 
     return res.json({
-      token: generateToken(agent._id, agent.role),
+      token: generateToken({ _id: agent._id, role: agent.role }),
       agent: sanitize(agent),
     });
   } catch (e) {
@@ -121,10 +137,9 @@ export const loginAgent = async (req, res) => {
 // GET /api/agent  (admin)
 export const getAgents = async (req, res) => {
   try {
-    const companyId = req.companyId || req.user?.company || null;
-    const query = companyId ? { company: companyId } : {};
-    const agents = await Agent.find(query)
-      .select("_id name email role phone company createdAt updatedAt")
+    // Single-tenant: no company filtering
+    const agents = await Agent.find({})
+      .select("_id name email role phone username department monthlyTarget commissionRate createdAt updatedAt")
       .sort({ createdAt: -1 })
       .lean();
     return res.json(agents);
@@ -138,11 +153,9 @@ export const getAgents = async (req, res) => {
 export const getAgentById = async (req, res) => {
   try {
     const { id } = req.params;
-    const companyId = req.companyId || req.user?.company || null;
-    const query = companyId ? { _id: id, company: companyId } : { _id: id };
-
-    const agent = await Agent.findOne(query)
-      .select("_id name email role phone company createdAt updatedAt")
+    // Single-tenant: no company filtering
+    const agent = await Agent.findById(id)
+      .select("_id name email role phone username department monthlyTarget commissionRate createdAt updatedAt")
       .lean();
 
     if (!agent) return res.status(404).json({ message: "Agent not found" });
@@ -163,10 +176,8 @@ export const updateAgent = async (req, res) => {
       return res.status(400).json({ message: "At least one field (name, phone, password) is required to update" });
     }
 
-    const companyId = req.companyId || req.user?.company || null;
-    const query = companyId ? { _id: id, company: companyId } : { _id: id };
-
-    const agent = await Agent.findOne(query).select("+passwordHash");
+    // Single-tenant: no company filtering
+    const agent = await Agent.findById(id).select("+passwordHash");
     if (!agent) return res.status(404).json({ message: "Agent not found" });
 
     // Only admin or the agent himself can update
@@ -174,9 +185,15 @@ export const updateAgent = async (req, res) => {
       return res.status(403).json({ message: "Forbidden" });
     }
 
+    const { username, department, monthlyTarget, commissionRate } = req.body;
+    
     if (typeof name !== "undefined") agent.name = name;
     if (typeof phone !== "undefined") agent.phone = phone;
     if (password) agent.passwordHash = await bcrypt.hash(password, 12);
+    if (typeof username !== "undefined") agent.username = username;
+    if (typeof department !== "undefined") agent.department = department;
+    if (typeof monthlyTarget !== "undefined") agent.monthlyTarget = monthlyTarget;
+    if (typeof commissionRate !== "undefined") agent.commissionRate = commissionRate;
 
     await agent.save();
     return res.json(sanitize(agent));
@@ -190,10 +207,8 @@ export const updateAgent = async (req, res) => {
 export const deleteAgent = async (req, res) => {
   try {
     const { id } = req.params;
-    const companyId = req.companyId || req.user?.company || null;
-    const query = companyId ? { _id: id, company: companyId } : { _id: id };
-
-    const agent = await Agent.findOne(query);
+    // Single-tenant: no company filtering
+    const agent = await Agent.findById(id);
     if (!agent) return res.status(404).json({ message: "Agent not found" });
 
     await agent.deleteOne(); // remove() is deprecated
@@ -204,11 +219,11 @@ export const deleteAgent = async (req, res) => {
   }
 };
 
-// GET /api/agent/performance  (admin; company-scoped)
+// GET /api/agent/performance  (admin; no company requirement)
 export const getAgentPerformance = async (req, res) => {
   try {
-    const companyId = req.companyId || req.user?.company || null;
-    const { Booking } = await getCompanyModels(companyId);
+    // Use the shared Booking model directly (no company context needed)
+    const Booking = (await import("../models/Booking.js")).default;
 
     const { start, end } = req.query; // optional ISO strings
     const match = {};
@@ -217,12 +232,16 @@ export const getAgentPerformance = async (req, res) => {
       if (start) match.createdAt.$gte = new Date(start);
       if (end) match.createdAt.$lte = new Date(end);
     }
-    // If your Booking schema has a company field, also filter by it:
-    if (companyId) match.company = companyId;
 
     const data = await Booking.aggregate([
       { $match: match },
-      { $group: { _id: "$agent", bookings: { $sum: 1 }, revenue: { $sum: "$totalAmount" } } },
+      { 
+        $group: { 
+          _id: "$agent", 
+          bookings: { $sum: 1 }, 
+          revenue: { $sum: { $ifNull: ["$totalAmount", 0] } } // Handle missing totalAmount field
+        } 
+      },
       { $sort: { bookings: -1 } },
     ]);
 

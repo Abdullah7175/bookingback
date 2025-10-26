@@ -6,6 +6,7 @@ import jwt from "jsonwebtoken";
 
 import connectDB from "./config/db.js";
 import { loginUser } from "./controllers/authController.js";
+import { loginAgent } from "./controllers/agentController.js";
 import User from "./models/User.js";
 
 // Routers
@@ -56,7 +57,7 @@ const auth = (req,res,next)=>{
 // ---- Routes
 // Keep inline login (safe), plus mount full auth router
 app.post("/api/auth/login", loginUser);
-app.post("/api/agent/login", loginUser); // some UIs call this
+app.post("/api/agent/login", loginAgent); // Use agent-specific login
 
 // "me" endpoints needed by the UI
 app.get("/api/auth/me", auth, async (req,res)=>{
@@ -65,7 +66,28 @@ app.get("/api/auth/me", auth, async (req,res)=>{
   res.json({ id: u._id, name: u.name, email: u.email, role: u.role });
 });
 app.get("/api/agent/me", auth, async (req,res)=>{
-  const u = await User.findById(req.userId).lean();
+  // Try User first (for backwards compatibility)
+  let u = await User.findById(req.userId).lean();
+  
+  // If not found in User, try Agent model
+  if (!u) {
+    const { default: Agent } = await import("./models/Agent.js");
+    const agent = await Agent.findById(req.userId)
+      .select("_id name email role phone username department monthlyTarget commissionRate")
+      .lean();
+    
+    if (agent) {
+      // Return agent data in user-like format
+      return res.json({
+        id: agent._id,
+        name: agent.name,
+        email: agent.email,
+        role: agent.role || "agent",
+      });
+    }
+  }
+  
+  // Only reach here if found in User model
   if (!u) return res.status(404).json({ message: "User not found" });
   res.json({ id: u._id, name: u.name, email: u.email, role: u.role });
 });
