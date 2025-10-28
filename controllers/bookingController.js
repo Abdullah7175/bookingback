@@ -81,7 +81,26 @@ export const getBookingPdf = async (req, res) => {
   doc.fontSize(12).font('Helvetica-Bold').text(`Status: ${(booking.status || 'pending').toUpperCase()}`, 50, startY);
   doc.text(`Approval: ${(booking.approvalStatus || 'pending').toUpperCase()}`, 300, startY);
   doc.font('Helvetica');
-  doc.moveDown(2);
+  doc.moveDown(1);
+
+  // PROFIT SUMMARY (For Internal Use)
+  const costingTotals = booking.costing?.totals || booking.pricing?.totals || {};
+  const totalCost = costingTotals.totalCostPrice || costingTotals.totalCost || 0;
+  const totalSale = costingTotals.totalSalePrice || costingTotals.totalSale || 0;
+  const profit = costingTotals.profit || (totalSale - totalCost) || 0;
+  
+  if (totalCost || totalSale || profit) {
+    doc.rect(50, doc.y, doc.page.width - 100, 60).fill('#f0f9ff');
+    doc.fillColor('#000000');
+    const profitY = doc.y + 10;
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#1e40af').text('INTERNAL USE - PROFIT SUMMARY', 60, profitY);
+    doc.moveDown(0.3);
+    doc.fontSize(9).font('Helvetica').fillColor('#000000');
+    doc.text(`Total Cost: $${totalCost.toFixed(2)}  |  Total Sale: $${totalSale.toFixed(2)}  |  Profit: $${profit.toFixed(2)}`, 60);
+    doc.moveDown(1.5);
+  } else {
+    doc.moveDown(1);
+  }
 
   // CUSTOMER INFORMATION
   doc.fontSize(14).font('Helvetica-Bold').text('CUSTOMER INFORMATION', { underline: true });
@@ -117,7 +136,7 @@ export const getBookingPdf = async (req, res) => {
   const depCity = booking.flight?.departureCity || booking.departureCity || "";
   const arrCity = booking.flight?.arrivalCity || booking.arrivalCity || "";
   if (depCity && arrCity) {
-    doc.text(`Route: ${depCity} ✈ ${arrCity}`);
+    doc.text(`Route: ${depCity} to ${arrCity}`);
   }
   
   // Flight class - check multiple locations
