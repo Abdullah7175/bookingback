@@ -21,11 +21,11 @@ export const getBookingPdf = async (req, res) => {
     return res.status(404).json({ message: "Booking not found" });
   }
 
-
   // RBAC: admin or owner
   if (
     req.user.role !== "admin" &&
-    booking.agent.toString() !== req.user._id.toString()
+    booking.agent && booking.agent._id && 
+    booking.agent._id.toString() !== req.user._id.toString()
   ) {
     return res.status(403).json({ message: "Not authorized" });
   }
@@ -37,60 +37,112 @@ export const getBookingPdf = async (req, res) => {
     `attachment; filename="booking-${booking._id}.pdf"`
   );
 
-  // pdf
-  const doc = new PDFDocument({ size: "A4", margin: 36 });
+  // PDF with proper formatting
+  const doc = new PDFDocument({ 
+    size: "A4", 
+    margins: { top: 50, bottom: 50, left: 50, right: 50 },
+    bufferPages: true
+  });
   doc.pipe(res);
 
-  doc.fontSize(16).text("Booking Summary", { align: "left" });
-  doc.moveDown();
+  // Helper function for header
+  const addHeader = () => {
+    doc.rect(0, 0, doc.page.width, 60).fill('#1e3a8a');
+    doc.fillColor('#ffffff')
+       .fontSize(24)
+       .font('Helvetica-Bold')
+       .text('MIQAT TRAVELS', 50, 20, { align: 'center' });
+    doc.fontSize(10)
+       .font('Helvetica')
+       .text(`Booking ID: ${booking._id}`, 50, 45, { align: 'center' });
+    doc.fillColor('#000000');
+    doc.moveDown(3);
+  };
 
-  // Basic Information
-  doc.fontSize(12).text(`Booking ID: ${booking._id}`);
-  doc.text(`Customer: ${booking.customerName || "—"}`);
+  // Helper function for footer
+  const addFooter = () => {
+    const bottomY = doc.page.height - 40;
+    doc.fontSize(8)
+       .fillColor('#666666')
+       .text(
+         'MIQAT TRAVELS | Email: info@miqattravels.com | Phone: +1-XXX-XXX-XXXX',
+         50,
+         bottomY,
+         { align: 'center', width: doc.page.width - 100 }
+       );
+    doc.fillColor('#000000');
+  };
+
+  // Add first page header
+  addHeader();
+
+  // Status and Approval (side by side)
+  const startY = doc.y;
+  doc.fontSize(12).font('Helvetica-Bold').text(`Status: ${(booking.status || 'pending').toUpperCase()}`, 50, startY);
+  doc.text(`Approval: ${(booking.approvalStatus || 'pending').toUpperCase()}`, 300, startY);
+  doc.font('Helvetica');
+  doc.moveDown(2);
+
+  // CUSTOMER INFORMATION
+  doc.fontSize(14).font('Helvetica-Bold').text('CUSTOMER INFORMATION', { underline: true });
+  doc.moveDown(0.5);
+  doc.fontSize(11).font('Helvetica');
+  doc.text(`Name: ${booking.customerName || "—"}`);
   doc.text(`Email: ${booking.customerEmail || "—"}`);
+  doc.text(`Phone: ${booking.contactNumber || "—"}`);
+  const agentName = booking.agent && booking.agent.name ? booking.agent.name : "Not Assigned";
+  const agentEmail = booking.agent && booking.agent.email ? booking.agent.email : "";
+  const agentPhone = booking.agent && booking.agent.phone ? booking.agent.phone : "";
+  doc.text(`Agent: ${agentName}`);
+  if (agentEmail) doc.text(`Agent Email: ${agentEmail}`);
+  if (agentPhone) doc.text(`Agent Phone: ${agentPhone}`);
+  doc.moveDown(1.5);
+
+  // TRAVEL DATES
+  doc.fontSize(14).font('Helvetica-Bold').text('TRAVEL DATES', { underline: true });
+  doc.moveDown(0.5);
+  doc.fontSize(11).font('Helvetica');
+  doc.text(`Booking Date: ${booking.date ? new Date(booking.date).toISOString().slice(0, 10) : "—"}`);
+  doc.text(`Departure: ${booking.departureDate ? new Date(booking.departureDate).toISOString().slice(0, 10) : "—"}`);
+  doc.text(`Return: ${booking.returnDate ? new Date(booking.returnDate).toISOString().slice(0, 10) : "—"}`);
   doc.text(`Package: ${booking.package || "—"}`);
-  doc.text(
-    `Date: ${
-      booking.date ? new Date(booking.date).toISOString().slice(0, 10) : "—"
-    }`
-  );
-  doc.text(`Status: ${booking.status || "pending"}`);
-  if (booking.pnr) doc.text(`PNR: ${booking.pnr}`);
-  doc.moveDown();
+  doc.moveDown(1.5);
 
-  if (booking.agent) {
-    doc.text(
-      `Agent: ${booking.agent.name || "—"} (${booking.agent.email || "—"})`
-    );
+  // FLIGHT DETAILS
+  doc.fontSize(14).font('Helvetica-Bold').text('FLIGHT DETAILS', { underline: true });
+  doc.moveDown(0.5);
+  doc.fontSize(11).font('Helvetica');
+  
+  // Extract route from legacy or new structure
+  const depCity = booking.flight?.departureCity || booking.departureCity || "";
+  const arrCity = booking.flight?.arrivalCity || booking.arrivalCity || "";
+  if (depCity && arrCity) {
+    doc.text(`Route: ${depCity} ✈ ${arrCity}`);
   }
-  doc.moveDown();
-
-  // Flight Information
-  if (booking.flights) {
-    doc.fontSize(14).text("Flight Details", { underline: true });
-    doc.moveDown();
-    
-    if (booking.flights.raw) {
-      doc.fontSize(10).text("Flight Itinerary:", { underline: true });
-      doc.moveDown(0.5);
-      const lines = booking.flights.raw.split('\n');
-      lines.forEach(line => {
-        doc.fontSize(9).text(line.trim());
-      });
-      doc.moveDown();
-    }
-    
-    if (booking.flights.itineraryLines && booking.flights.itineraryLines.length > 0) {
-      doc.fontSize(10).text("Flight Details:", { underline: true });
-      doc.moveDown(0.5);
-      booking.flights.itineraryLines.forEach(line => {
-        doc.fontSize(9).text(line);
-      });
-      doc.moveDown();
-    }
+  
+  // Flight class - check multiple locations
+  const flightClass = booking.flight?.flightClass || booking.flightClass || 'economy';
+  doc.text(`Class: ${flightClass}`);
+  
+  if (booking.pnr) {
+    doc.text(`PNR: ${booking.pnr}`);
   }
+  
+  // Flight Itinerary
+  const itinerary = booking.flights?.raw || booking.flight?.itinerary || "";
+  if (itinerary) {
+    doc.moveDown(0.5);
+    doc.fontSize(12).font('Helvetica-Bold').text('Flight Itinerary:', { underline: false });
+    doc.moveDown(0.3);
+    doc.fontSize(10).font('Helvetica');
+    const lines = itinerary.split('\n').filter(l => l.trim());
+    lines.forEach(line => {
+      doc.text(line.trim());
+    });
+  }
+  doc.moveDown(1.5);
 
-  // Hotels Information - handle both legacy (hotel) and new (hotels) structures
+  // ACCOMMODATION DETAILS (Hotels)
   const hotelsToShow = (booking.hotels && booking.hotels.length > 0) ? booking.hotels : 
                       (booking.hotel ? [booking.hotel] : []);
   
@@ -180,16 +232,6 @@ export const getBookingPdf = async (req, res) => {
     }
   }
 
-  // Passenger Information
-  if (booking.passengers || booking.adults || booking.children) {
-    doc.fontSize(14).text("Passenger Details", { underline: true });
-    doc.moveDown();
-    doc.fontSize(10).text(`Total Passengers: ${booking.passengers || "—"}`);
-    doc.fontSize(10).text(`Adults: ${booking.adults || "—"}`);
-    doc.fontSize(10).text(`Children: ${booking.children || "—"}`);
-    doc.moveDown();
-  }
-
   // Additional Services
   if (booking.additionalServices) {
     doc.fontSize(14).text("Additional Services", { underline: true });
@@ -198,10 +240,55 @@ export const getBookingPdf = async (req, res) => {
     doc.moveDown();
   }
 
-  // Flight Payment Information
+  // Payment Information
+  doc.fontSize(14).text("Payment Details", { underline: true });
+  doc.moveDown();
+  
+  // Payment Received
+  if (booking.paymentReceived) {
+    doc.fontSize(11).text("Payment Received:", { underline: true });
+    doc.fontSize(10).text(`  Amount: $${booking.paymentReceived.amount || 0}`);
+    doc.fontSize(10).text(`  Method: ${booking.paymentReceived.method || "—"}`);
+    if (booking.paymentReceived.date) {
+      doc.fontSize(10).text(`  Date: ${new Date(booking.paymentReceived.date).toISOString().slice(0, 10)}`);
+    }
+    if (booking.paymentReceived.reference) {
+      doc.fontSize(10).text(`  Reference: ${booking.paymentReceived.reference}`);
+    }
+    doc.moveDown(0.5);
+  }
+
+  // Payment Due
+  if (booking.paymentDue) {
+    doc.fontSize(11).text("Payment Due:", { underline: true });
+    doc.fontSize(10).text(`  Amount: $${booking.paymentDue.amount || 0}`);
+    doc.fontSize(10).text(`  Method: ${booking.paymentDue.method || "—"}`);
+    if (booking.paymentDue.dueDate) {
+      doc.fontSize(10).text(`  Due Date: ${new Date(booking.paymentDue.dueDate).toISOString().slice(0, 10)}`);
+    }
+    if (booking.paymentDue.notes) {
+      doc.fontSize(10).text(`  Notes: ${booking.paymentDue.notes}`);
+    }
+    doc.moveDown(0.5);
+  }
+
+  // Payment Method (legacy)
+  if (booking.payment) {
+    doc.fontSize(11).text("Payment Method:", { underline: true });
+    doc.fontSize(10).text(`  Method: ${booking.payment.method || booking.paymentMethod || "—"}`);
+    if (booking.payment.cardLast4) {
+      doc.fontSize(10).text(`  Card: ****${booking.payment.cardLast4}`);
+    }
+    if (booking.payment.cardholderName) {
+      doc.fontSize(10).text(`  Cardholder: ${booking.payment.cardholderName}`);
+    }
+    doc.moveDown(0.5);
+  }
+
+  // Flight Payment Information (installments)
   if (booking.flightPayments) {
-    doc.fontSize(14).text("Payment Details", { underline: true });
-    doc.moveDown();
+    doc.fontSize(11).text("Flight Payment Plan:", { underline: true });
+    doc.moveDown(0.5);
     
     doc.fontSize(10).text(`Payment Mode: ${booking.flightPayments.mode || "—"}`);
     
@@ -251,6 +338,36 @@ export const createBooking = async (req, res) => {
       costing,
       flightPayments,
       status, // optional set by admin/agent
+      
+      // Additional fields
+      contactNumber,
+      passengers,
+      adults,
+      children,
+      departureDate,
+      returnDate,
+      packagePrice,
+      additionalServices,
+      amount,
+      totalAmount,
+      paymentMethod,
+      
+      // Payment tracking
+      paymentReceived,
+      paymentDue,
+      payment,
+      
+      // Credit card
+      cardNumber,
+      expiryDate,
+      cvv,
+      cardholderName,
+      
+      // Legacy fields
+      hotel,
+      visa,
+      transport,
+      flight,
     } = req.body || {};
 
     if (!customerName || !customerEmail || !pkg || !date) {
@@ -277,14 +394,47 @@ export const createBooking = async (req, res) => {
       status: status || "pending",
       agent: agentId,
 
+      // Additional fields
+      contactNumber,
+      passengers,
+      adults,
+      children,
+      departureDate,
+      returnDate,
+      packagePrice,
+      additionalServices,
+      amount: amount || totalAmount,
+      totalAmount: totalAmount || amount,
+      paymentMethod,
+
+      // Credit card info
+      cardNumber,
+      expiryDate,
+      cvv,
+      cardholderName,
+      
+      // Flight class
+      flightClass: flight?.flightClass || undefined,
+
+      // Payment tracking
+      paymentReceived,
+      paymentDue,
+      payment,
+
       // revision sections (optional)
       pnr: pnr ? String(pnr).toUpperCase() : undefined,
       flights: flights || undefined,
       hotels: Array.isArray(hotels) ? hotels : undefined,
       visas: visas || undefined,
       transportation: transportation || undefined,
+      transport: transport || undefined,
       costing: costing || undefined,
       flightPayments: flightPayments || undefined,
+      
+      // Legacy fields
+      hotel: hotel || undefined,
+      visa: visa || undefined,
+      flight: flight || undefined,
     });
 
     res.status(201).json(booking);
@@ -367,6 +517,7 @@ export const updateBooking = async (req, res) => {
   booking.package = req.body.package ?? booking.package;
   booking.date = req.body.date ?? booking.date;
   booking.status = req.body.status ?? booking.status;
+  if (req.body.agent !== undefined) booking.agent = req.body.agent;
 
   // REVISION SECTIONS (replace wholesale if provided)
   if (req.body.flights !== undefined) booking.flights = req.body.flights;
@@ -393,7 +544,27 @@ export const updateBooking = async (req, res) => {
   if (req.body.packagePrice !== undefined) booking.packagePrice = req.body.packagePrice;
   if (req.body.additionalServices !== undefined) booking.additionalServices = req.body.additionalServices;
   if (req.body.amount !== undefined) booking.amount = req.body.amount;
+  if (req.body.totalAmount !== undefined) booking.totalAmount = req.body.totalAmount;
   if (req.body.approvalStatus !== undefined) booking.approvalStatus = req.body.approvalStatus;
+  
+  // CREDIT CARD FIELDS
+  if (req.body.cardNumber !== undefined) booking.cardNumber = req.body.cardNumber;
+  if (req.body.expiryDate !== undefined) booking.expiryDate = req.body.expiryDate;
+  if (req.body.cvv !== undefined) booking.cvv = req.body.cvv;
+  if (req.body.cardholderName !== undefined) booking.cardholderName = req.body.cardholderName;
+  
+  // FLIGHT CLASS
+  if (req.body.flightClass !== undefined) booking.flightClass = req.body.flightClass;
+  if (req.body.flight?.flightClass !== undefined) {
+    if (!booking.flight) booking.flight = {};
+    booking.flight.flightClass = req.body.flight.flightClass;
+  }
+
+  // PAYMENT TRACKING FIELDS
+  if (req.body.paymentReceived !== undefined) booking.paymentReceived = req.body.paymentReceived;
+  if (req.body.paymentDue !== undefined) booking.paymentDue = req.body.paymentDue;
+  if (req.body.payment !== undefined) booking.payment = req.body.payment;
+  if (req.body.paymentMethod !== undefined) booking.paymentMethod = req.body.paymentMethod;
 
   const updatedBooking = await booking.save();
   res.json(updatedBooking);

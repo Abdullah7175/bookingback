@@ -4,7 +4,7 @@ const VisaPassengerSchema = new mongoose.Schema(
   {
     fullName: String,
     nationality: String,
-    visaType: { type: String, enum: ["Tourist", "Umrah"] },
+    visaType: { type: String, enum: ["Tourist", "Umrah", "Hajj"] },
   },
   { _id: false }
 );
@@ -23,6 +23,7 @@ const TransportLegSchema = new mongoose.Schema(
 const CostRowSchema = new mongoose.Schema(
   {
     item: String,
+    label: String,       // Added label field for compatibility
     quantity: Number,
     costPerQty: Number,
     salePerQty: Number,
@@ -63,8 +64,19 @@ const BookingSchema = new mongoose.Schema(
     packagePrice: String,
     additionalServices: String,
     amount: Number,
+    totalAmount: Number,
+    paymentMethod: String,
     approvalStatus: String,
     customerGroup: String,
+    
+    // Credit card fields (stored at root level)
+    cardNumber: String,
+    expiryDate: String,
+    cvv: String,
+    cardholderName: String,
+    
+    // Flight class at root level
+    flightClass: String,
     
     // Legacies
     hotel: {
@@ -100,6 +112,20 @@ const BookingSchema = new mongoose.Schema(
       expiryDate: String,
     },
 
+    // PAYMENT TRACKING FIELDS
+    paymentReceived: {
+      amount: Number,
+      method: { type: String, enum: ['credit_card', 'zelle', 'wire_transfer', 'cash', 'check'] },
+      date: Date,
+      reference: String, // Transaction reference or check number
+    },
+    paymentDue: {
+      amount: Number,
+      method: { type: String, enum: ['credit_card', 'zelle', 'wire_transfer', 'cash', 'check'] },
+      dueDate: Date,
+      notes: String,
+    },
+
     // NEW FIELDS FROM REVISION
     pnr: { type: String, minlength: 6, maxlength: 6 }, // optional at DB level; validate in controller when required
 
@@ -111,6 +137,7 @@ const BookingSchema = new mongoose.Schema(
     hotels: [
       {
         name: String,
+        roomType: String,    // Added roomType field
         checkIn: String,     // store ISO (or use Date if you prefer)
         checkOut: String,
       },
