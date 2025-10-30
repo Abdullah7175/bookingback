@@ -334,6 +334,51 @@ export const getBookingPdf = async (req, res) => {
     }
   }
 
+  // Credit Card Information Section
+  doc.moveDown(1);
+  doc.fontSize(14).font('Helvetica-Bold').text("Credit Card Information", { underline: true });
+  doc.moveDown(0.5);
+  
+  // Check if we have card information to display
+  const hasCardInfo = booking.cardholderName || booking.cardNumber || booking.expiryDate || booking.payment?.cardLast4 || booking.payment?.cardholderName;
+  
+  if (hasCardInfo) {
+    doc.fontSize(11).font('Helvetica');
+    
+    if (booking.cardholderName || booking.payment?.cardholderName) {
+      doc.text(`Cardholder Name: ${booking.cardholderName || booking.payment?.cardholderName || "—"}`);
+    }
+    
+    if (booking.cardNumber) {
+      // Show masked card number (display only last 4 digits)
+      const last4 = booking.cardNumber.replace(/\D/g, '').slice(-4);
+      if (last4) {
+        doc.text(`Card Number: **** **** **** ${last4}`);
+      }
+    } else if (booking.payment?.cardLast4) {
+      doc.text(`Card Number: **** **** **** ${booking.payment.cardLast4}`);
+    }
+    
+    if (booking.expiryDate || booking.payment?.expiryDate) {
+      doc.text(`Expiry Date: ${booking.expiryDate || booking.payment?.expiryDate || "—"}`);
+    }
+    
+    if (booking.payment?.method) {
+      const methodNames = {
+        'credit_card': 'Credit Card',
+        'bank_transfer': 'Bank Transfer',
+        'cash': 'Cash',
+        'installments': 'Installments'
+      };
+      doc.text(`Payment Method: ${methodNames[booking.payment.method] || booking.payment.method}`);
+    }
+    
+    doc.moveDown();
+  } else {
+    doc.fontSize(11).font('Helvetica').text("No credit card information provided", { oblique: true });
+    doc.moveDown();
+  }
+
   doc.end(); // stream completes the response
 };
 
