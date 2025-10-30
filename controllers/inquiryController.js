@@ -1,11 +1,76 @@
 import Inquiry from "../models/Inquiry.js";
+import crypto from "crypto";
+import superagent from "superagent";
+
+// Helper to build webhook payload in the expected shape
+const buildWebhookBody = (inq) => ({
+  id: inq._id?.toString?.() || String(inq.id || ""),
+  name: inq.customerName || inq.name || "",
+  email: inq.customerEmail || inq.email || "",
+  phone: inq.customerPhone || inq.phone || "",
+  message: inq.message || "",
+  created_at: (inq.createdAt instanceof Date ? inq.createdAt : new Date(inq.createdAt || Date.now())).toISOString(),
+});
+
+// Send signed webhook (best-effort)
+export const forwardInquiryWebhook = async (inquiry) => {
+  const url = process.env.INQUIRY_WEBHOOK_URL;
+  const secret = process.env.INQUIRY_WEBHOOK_SECRET;
+  if (!url || !secret) return { skipped: true, reason: "Webhook env not configured" };
+
+  const body = buildWebhookBody(inquiry);
+  const raw = JSON.stringify(body);
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = crypto
+    .createHmac("sha256", secret)
+    .update(`${timestamp}.${raw}`)
+    .digest("hex");
+
+  try {
+    const resp = await superagent
+      .post(url)
+      .set("Content-Type", "application/json")
+      .set("X-Webhook-Timestamp", timestamp)
+      .set("X-Webhook-Signature", signature)
+      .set("Idempotency-Key", `inq-${inquiry._id}`)
+      .send(body);
+
+    return { success: true, status: resp.status, body: resp.text };
+  } catch (e) {
+    // Return failure (do not throw to avoid breaking main flow)
+    return { success: false, status: e.status || null, body: e.response?.text || e.message };
+  }
+};
 
 // Create a new inquiry
 export const createInquiry = async (req, res) => {
   try {
-    const { customerName, customerEmail, customerPhone, message } = req.body;
-    const inquiry = new Inquiry({ customerName, customerEmail, customerPhone, message });
+    // Support both the documented payload and legacy field names
+    const {
+      name,
+      email,
+      phone,
+      message,
+      customerName,
+      customerEmail,
+      customerPhone,
+    } = req.body;
+
+    const inquiry = new Inquiry({
+      customerName: customerName || name,
+      customerEmail: customerEmail || email,
+      customerPhone: customerPhone || phone,
+      message,
+    });
     await inquiry.save();
+
+    // Best-effort webhook forward (do not block creation if it fails)
+    forwardInquiryWebhook(inquiry).then((r) => {
+      if (!r?.success) {
+        console.warn("Inquiry webhook forward failed:", r);
+      }
+    });
+
     res.status(201).json({ success: true, data: inquiry });
   } catch (error) {
     console.error(error);
@@ -106,5 +171,27 @@ export const deleteInquiry = async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Manual secure forward: POST /api/inquiries/:id/forward-webhook
+export const manualForwardInquiryWebhook = async (req, res) => {
+  try {
+    const apiKey = req.header("X-Api-Key");
+    if (!process.env.ADMIN_API_KEY || apiKey !== process.env.ADMIN_API_KEY) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const inquiry = await Inquiry.findById(req.params.id);
+    if (!inquiry) return res.status(404).json({ error: "Inquiry not found" });
+
+    const result = await forwardInquiryWebhook(inquiry);
+    if (result.success) {
+      return res.status(200).json({ success: true, status: result.status, body: result.body });
+    }
+    return res.status(502).json({ success: false, status: result.status || null, body: result.body || "failed" });
+  } catch (error) {
+    console.error("manualForwardInquiryWebhook error:", error);
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
