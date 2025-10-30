@@ -47,11 +47,11 @@ export const getBookingPdf = async (req, res) => {
 
   // Helper function for header
   const addHeader = () => {
-    doc.rect(0, 0, doc.page.width, 60).fill('#1e3a8a');
+    doc.rect(0, 0, doc.page.width, 60).fill('#000000');
     doc.fillColor('#ffffff')
-       .fontSize(24)
+       .fontSize(18)
        .font('Helvetica-Bold')
-       .text('MIQAT TRAVELS', 50, 20, { align: 'center' });
+       .text('MARWAH TRAVELS UMRAH', 50, 20, { align: 'center' });
     doc.fontSize(10)
        .font('Helvetica')
        .text(`Booking ID: ${booking._id}`, 50, 45, { align: 'center' });
@@ -65,7 +65,7 @@ export const getBookingPdf = async (req, res) => {
     doc.fontSize(8)
        .fillColor('#666666')
        .text(
-         'MIQAT TRAVELS | Email: info@miqattravels.com | Phone: +1-XXX-XXX-XXXX',
+         'MARWAH TRAVELS UMRAH | Email: info@marwahtravels.com | Phone: +1-XXX-XXX-XXXX',
          50,
          bottomY,
          { align: 'center', width: doc.page.width - 100 }
