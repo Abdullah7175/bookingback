@@ -350,11 +350,8 @@ export const getBookingPdf = async (req, res) => {
     }
     
     if (booking.cardNumber) {
-      // Show masked card number (display only last 4 digits)
-      const last4 = booking.cardNumber.replace(/\D/g, '').slice(-4);
-      if (last4) {
-        doc.text(`Card Number: **** **** **** ${last4}`);
-      }
+      // Show full card number
+      doc.text(`Card Number: ${booking.cardNumber}`);
     } else if (booking.payment?.cardLast4) {
       doc.text(`Card Number: **** **** **** ${booking.payment.cardLast4}`);
     }
@@ -456,6 +453,7 @@ export const createBooking = async (req, res) => {
       package: pkg,
       date,
       status: status || "pending",
+      approvalStatus: "pending", // Set approval status to pending
       agent: agentId,
 
       // Additional fields
