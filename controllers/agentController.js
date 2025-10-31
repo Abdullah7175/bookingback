@@ -235,11 +235,37 @@ export const getAgentPerformance = async (req, res) => {
 
     const data = await Booking.aggregate([
       { $match: match },
+      {
+        $project: {
+          agent: 1,
+          // Calculate profit: use costing.totals.profit if available and > 0, otherwise calculate as totalSale - totalCost
+          profit: {
+            $cond: {
+              if: { 
+                $and: [
+                  { $ne: [{ $ifNull: ["$costing.totals.profit", null] }, null] },
+                  { $gt: [{ $ifNull: ["$costing.totals.profit", 0] }, 0] }
+                ]
+              },
+              then: { $ifNull: ["$costing.totals.profit", 0] },
+              else: {
+                $let: {
+                  vars: {
+                    totalSale: { $ifNull: ["$costing.totals.totalSale", { $ifNull: ["$totalAmount", 0] }] },
+                    totalCost: { $ifNull: ["$costing.totals.totalCost", 0] }
+                  },
+                  in: { $subtract: ["$$totalSale", "$$totalCost"] }
+                }
+              }
+            }
+          }
+        }
+      },
       { 
         $group: { 
           _id: "$agent", 
           bookings: { $sum: 1 }, 
-          revenue: { $sum: { $ifNull: ["$totalAmount", 0] } } // Handle missing totalAmount field
+          profit: { $sum: "$profit" }
         } 
       },
       { $sort: { bookings: -1 } },
