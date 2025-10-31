@@ -42,9 +42,32 @@ console.log('🔒 CORS Configuration:', {
   environment: process.env.NODE_ENV || 'development'
 });
 
-app.use((req,res,next)=>{ res.setHeader("Vary","Origin"); next(); });
+// Manual CORS middleware - runs BEFORE cors() to ensure headers are set correctly
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  // Check if origin is allowed
+  if (origin && allAllowed.includes(origin)) {
+    // Set CORS headers explicitly
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,Expires,Cache-Control,Pragma,x-company-id');
+    res.setHeader('Vary', 'Origin');
+    
+    // Handle preflight requests
+    if (req.method === 'OPTIONS') {
+      return res.status(204).end();
+    }
+  } else if (!origin) {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+  
+  next();
+});
 
-// CORS middleware with explicit origin handling
+// Also use cors middleware as backup
 app.use(cors({
   origin(origin, cb) {
     // Allow requests with no origin (like mobile apps, Postman, etc.)
