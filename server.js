@@ -26,16 +26,28 @@ app.use(express.json());
 const allowed = (process.env.CORS_ORIGIN || process.env.CLIENT_ORIGIN || "")
   .split(",").map(s => s.trim()).filter(Boolean);
 
+// Add default allowed origins for common domains
+const defaultAllowed = [
+  'https://www.mtumrah.com',
+  'https://mtumrah.com',
+  'https://www.miqattravels.com',
+  'https://miqattravels.com'
+];
+
+const allAllowed = [...new Set([...defaultAllowed, ...allowed])];
+
 app.use((req,res,next)=>{ res.setHeader("Vary","Origin"); next(); });
 app.use(cors({
   origin(origin, cb) {
     if (!origin) return cb(null, true);
-    if (!allowed.length) return cb(null, true);
-    return allowed.includes(origin) ? cb(null, true) : cb(new Error("CORS"));
+    // If no allowed origins configured, allow all (for development)
+    if (!allowed.length && !defaultAllowed.length) return cb(null, true);
+    // Check against all allowed origins (including defaults)
+    return allAllowed.includes(origin) ? cb(null, true) : cb(new Error("CORS"));
   },
   credentials: true,
   methods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
-  allowedHeaders: ["Content-Type","Authorization","Expires","Cache-Control","Pragma"]
+  allowedHeaders: ["Content-Type","Authorization","Expires","Cache-Control","Pragma","x-company-id"]
 }));
 
 // ---- Health
