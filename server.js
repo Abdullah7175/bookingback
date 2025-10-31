@@ -36,18 +36,43 @@ const defaultAllowed = [
 
 const allAllowed = [...new Set([...defaultAllowed, ...allowed])];
 
+// Log CORS configuration on startup
+console.log('🔒 CORS Configuration:', {
+  allowedOrigins: allAllowed,
+  environment: process.env.NODE_ENV || 'development'
+});
+
 app.use((req,res,next)=>{ res.setHeader("Vary","Origin"); next(); });
+
+// CORS middleware with explicit origin handling
 app.use(cors({
   origin(origin, cb) {
-    if (!origin) return cb(null, true);
-    // If no allowed origins configured, allow all (for development)
-    if (!allowed.length && !defaultAllowed.length) return cb(null, true);
-    // Check against all allowed origins (including defaults)
-    return allAllowed.includes(origin) ? cb(null, true) : cb(new Error("CORS"));
+    // Allow requests with no origin (like mobile apps, Postman, etc.)
+    if (!origin) {
+      return cb(null, true);
+    }
+    
+    // Allow all origins in development if no CORS_ORIGIN is set
+    if (allowed.length === 0 && process.env.NODE_ENV !== 'production') {
+      return cb(null, true);
+    }
+    
+    // Check if origin is in the allowed list
+    if (allAllowed.includes(origin)) {
+      console.log(`✅ CORS allowed: ${origin}`);
+      // Return the origin itself to allow it
+      return cb(null, origin);
+    }
+    
+    // Log rejected origin for debugging
+    console.warn(`❌ CORS blocked origin: ${origin}. Allowed origins:`, allAllowed);
+    return cb(null, false);
   },
   credentials: true,
   methods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
-  allowedHeaders: ["Content-Type","Authorization","Expires","Cache-Control","Pragma","x-company-id"]
+  allowedHeaders: ["Content-Type","Authorization","Expires","Cache-Control","Pragma","x-company-id"],
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 }));
 
 // ---- Health
