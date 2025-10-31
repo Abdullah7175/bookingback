@@ -537,8 +537,38 @@ export const createBooking = async (req, res) => {
  * @access  Private/Admin
  */
 export const getBookings = async (req, res) => {
-  const bookings = await Booking.find().populate("agent", "name email role");
-  res.json(bookings);
+  try {
+    // Get all bookings without populating first
+    let bookings = await Booking.find().lean();
+    
+    // Manually populate agent from both User and Agent models
+    const { default: Agent } = await import("../models/Agent.js");
+    const { default: User } = await import("../models/User.js");
+    
+    bookings = await Promise.all(bookings.map(async (booking) => {
+      if (booking.agent) {
+        const agentId = booking.agent.toString();
+        
+        // First try Agent model (since agents are more common)
+        let agent = await Agent.findById(agentId).select("name email role").lean();
+        if (agent) {
+          booking.agent = agent;
+        } else {
+          // Fallback to User model
+          const user = await User.findById(agentId).select("name email role").lean();
+          if (user) {
+            booking.agent = user;
+          }
+        }
+      }
+      return booking;
+    }));
+    
+    res.json(bookings);
+  } catch (error) {
+    console.error("getBookings error:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
 };
 
 // --------------------------------- READ -------------------------------------
@@ -563,23 +593,27 @@ export const getBookingById = async (req, res) => {
     return res.status(403).json({ message: "Not authorized" });
   }
 
-  // Now populate agent for the response (best effort - may fail if agent is from Agent model)
-  try {
-    await booking.populate("agent", "name email role");
-  } catch (populateError) {
-    // If populate fails (e.g., agent is in Agent collection, not User), 
-    // try to populate from Agent model instead
+  // Manually populate agent from both User and Agent models
+  if (booking.agent) {
+    const agentId = booking.agent.toString();
+    
     try {
       const { default: Agent } = await import("../models/Agent.js");
-      if (booking.agent) {
-        const agent = await Agent.findById(booking.agent).select("name email role");
-        if (agent) {
-          booking.agent = agent;
+      const { default: User } = await import("../models/User.js");
+      
+      // First try Agent model (since agents are more common)
+      let agent = await Agent.findById(agentId).select("name email role").lean();
+      if (agent) {
+        booking.agent = agent;
+      } else {
+        // Fallback to User model
+        const user = await User.findById(agentId).select("name email role").lean();
+        if (user) {
+          booking.agent = user;
         }
       }
-    } catch (agentError) {
-      // If both fail, agent will remain as ObjectId - that's okay
-      console.warn("Could not populate agent for booking:", booking._id);
+    } catch (populateError) {
+      console.warn("Could not populate agent for booking:", booking._id, populateError);
     }
   }
 
@@ -701,12 +735,38 @@ export const deleteBooking = async (req, res) => {
  */
 export const getMyBookings = async (req, res) => {
   try {
-    const bookings = await Booking.find({ agent: req.user._id }).sort({
-      createdAt: -1,
-    });
-    res.json(bookings);
+    // Get bookings without populating
+    const bookings = await Booking.find({ agent: req.user._id })
+      .sort({ createdAt: -1 })
+      .lean();
+    
+    // Manually populate agent from both User and Agent models
+    const { default: Agent } = await import("../models/Agent.js");
+    const { default: User } = await import("../models/User.js");
+    
+    const populatedBookings = await Promise.all(bookings.map(async (booking) => {
+      if (booking.agent) {
+        const agentId = booking.agent.toString();
+        
+        // First try Agent model (since agents are more common)
+        let agent = await Agent.findById(agentId).select("name email role").lean();
+        if (agent) {
+          booking.agent = agent;
+        } else {
+          // Fallback to User model
+          const user = await User.findById(agentId).select("name email role").lean();
+          if (user) {
+            booking.agent = user;
+          }
+        }
+      }
+      return booking;
+    }));
+    
+    res.json(populatedBookings);
   } catch (error) {
-    res.status(500).json({ message: "Server error" });
+    console.error("getMyBookings error:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };
 
