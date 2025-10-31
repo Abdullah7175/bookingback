@@ -119,6 +119,12 @@ const auth = (req,res,next)=>{
 app.post("/api/auth/login", loginUser);
 app.post("/api/agent/login", loginAgent); // Use agent-specific login
 
+// Logout endpoint (JWT tokens are stateless, so logout is mainly client-side)
+// This endpoint just confirms the logout request
+app.post("/api/auth/logout", (req, res) => {
+  res.json({ message: "Logged out successfully" });
+});
+
 // "me" endpoints needed by the UI
 app.get("/api/auth/me", auth, async (req,res)=>{
   // Try User first (for backwards compatibility)

@@ -3,7 +3,7 @@ import User from "../models/User.js";
 import generateToken from "../utils/generateToken.js";
 import bcrypt from "bcryptjs";
 
-// @desc    Login user
+// @desc    Login user (checks both User and Agent models)
 // @route   POST /api/auth/login
 // @access  Public
 export const loginUser = asyncHandler(async (req, res) => {
@@ -15,22 +15,48 @@ export const loginUser = asyncHandler(async (req, res) => {
     throw new Error("Email and password are required");
   }
 
-  const user = await User.findOne({ email });
-
-  if (user && (await user.matchPassword(password))) {
-    res.json({
-      token: generateToken(user),
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-      },
-    });
+  // Try User model first
+  let user = await User.findOne({ email }).select("+passwordHash");
+  
+  // If not found in User, try Agent model
+  if (!user) {
+    const { default: Agent } = await import("../models/Agent.js");
+    const agent = await Agent.findOne({ email }).select("+passwordHash");
+    
+    if (agent) {
+      // Check password for agent
+      const passwordMatch = await agent.matchPassword(password);
+      if (passwordMatch) {
+        return res.json({
+          token: generateToken({ _id: agent._id, role: agent.role }),
+          user: {
+            id: agent._id,
+            name: agent.name,
+            email: agent.email,
+            role: agent.role || "agent",
+          },
+        });
+      }
+    }
   } else {
-    res.status(401);
-    throw new Error("Invalid email or password");
+    // Check password for user
+    const passwordMatch = await user.matchPassword(password);
+    if (passwordMatch) {
+      return res.json({
+        token: generateToken(user),
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+        },
+      });
+    }
   }
+
+  // If we reach here, credentials are invalid
+  res.status(401);
+  throw new Error("Invalid email or password");
 });
 
 // @desc    Register user (admin only)
