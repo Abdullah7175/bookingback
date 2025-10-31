@@ -15,19 +15,42 @@ import Booking from "../models/Booking.js";
 // ----------------------------- PDF: GET /:id/pdf -----------------------------
 export const getBookingPdf = async (req, res) => {
   const { id } = req.params;
-  const booking = await Booking.findById(id).populate("agent", "name email");
+  
+  // First, get booking without populating to check ownership
+  const booking = await Booking.findById(id);
 
   if (!booking) {
     return res.status(404).json({ message: "Booking not found" });
   }
 
+  // Check ownership using the raw agent ID (works regardless of User/Agent model)
+  const isOwner = booking.agent 
+    ? String(booking.agent) === String(req.user._id)
+    : false;
+
   // RBAC: admin or owner
-  if (
-    req.user.role !== "admin" &&
-    booking.agent && booking.agent._id && 
-    booking.agent._id.toString() !== req.user._id.toString()
-  ) {
+  if (!isOwner && req.user.role !== "admin") {
     return res.status(403).json({ message: "Not authorized" });
+  }
+
+  // Now populate agent for PDF generation (best effort)
+  try {
+    await booking.populate("agent", "name email");
+  } catch (populateError) {
+    // If populate fails (e.g., agent is in Agent collection, not User), 
+    // try to populate from Agent model instead
+    try {
+      const { default: Agent } = await import("../models/Agent.js");
+      if (booking.agent) {
+        const agent = await Agent.findById(booking.agent).select("name email");
+        if (agent) {
+          booking.agent = agent;
+        }
+      }
+    } catch (agentError) {
+      // If both fail, agent will remain as ObjectId - continue anyway
+      console.warn("Could not populate agent for booking PDF:", booking._id);
+    }
   }
 
   // headers
@@ -525,22 +548,41 @@ export const getBookings = async (req, res) => {
  * @access  Private
  */
 export const getBookingById = async (req, res) => {
-  const booking = await Booking.findById(req.params.id).populate(
-    "agent",
-    "name email role"
-  );
+  // First, get booking without populating to check ownership
+  const booking = await Booking.findById(req.params.id);
   if (!booking) {
     return res.status(404).json({ message: "Booking not found" });
   }
 
-  const isOwner =
-    booking.agent && booking.agent._id
-      ? booking.agent._id.equals(req.user._id)
-      : String(booking.agent) === String(req.user._id);
+  // Check ownership using the raw agent ID (works regardless of User/Agent model)
+  const isOwner = booking.agent 
+    ? String(booking.agent) === String(req.user._id)
+    : false;
 
   if (!isOwner && req.user.role !== "admin") {
     return res.status(403).json({ message: "Not authorized" });
   }
+
+  // Now populate agent for the response (best effort - may fail if agent is from Agent model)
+  try {
+    await booking.populate("agent", "name email role");
+  } catch (populateError) {
+    // If populate fails (e.g., agent is in Agent collection, not User), 
+    // try to populate from Agent model instead
+    try {
+      const { default: Agent } = await import("../models/Agent.js");
+      if (booking.agent) {
+        const agent = await Agent.findById(booking.agent).select("name email role");
+        if (agent) {
+          booking.agent = agent;
+        }
+      }
+    } catch (agentError) {
+      // If both fail, agent will remain as ObjectId - that's okay
+      console.warn("Could not populate agent for booking:", booking._id);
+    }
+  }
+
   res.json(booking);
 };
 
