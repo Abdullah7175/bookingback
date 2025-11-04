@@ -222,6 +222,83 @@ export const getInquiryById = async (req, res) => {
   }
 };
 
+// Assign inquiry to agent and create booking entry
+export const assignInquiryToAgent = async (req, res) => {
+  try {
+    const { assignedAgent, createBooking } = req.body;
+    const inquiry = await Inquiry.findById(req.params.id).populate("assignedAgent", "name email");
+    
+    if (!inquiry) {
+      return res.status(404).json({ success: false, message: "Inquiry not found" });
+    }
+
+    // Only admin can assign inquiries
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ success: false, message: "Only admins can assign inquiries" });
+    }
+
+    if (!assignedAgent || assignedAgent === '' || assignedAgent === null) {
+      return res.status(400).json({ success: false, message: "Agent ID is required" });
+    }
+
+    // Verify agent exists in either User or Agent model
+    const { default: User } = await import("../models/User.js");
+    const { default: Agent } = await import("../models/Agent.js");
+    
+    const userAgent = await User.findById(assignedAgent);
+    const agentDoc = await Agent.findById(assignedAgent);
+    
+    if (!userAgent && !agentDoc) {
+      return res.status(400).json({ success: false, message: "Agent not found" });
+    }
+
+    // Step 1: Create booking entry if createBooking is true (default behavior)
+    if (createBooking !== false) {
+      const { default: Booking } = await import("../models/Booking.js");
+      
+      // Create booking from inquiry data
+      const bookingData = {
+        customerName: inquiry.customerName,
+        customerEmail: inquiry.customerEmail,
+        contactNumber: inquiry.customerPhone || '',
+        package: inquiry.packageDetails?.packageName || 'Inquiry Package',
+        date: new Date(),
+        status: 'pending',
+        approvalStatus: 'pending',
+        agent: assignedAgent,
+        // Include package details if available
+        packagePrice: inquiry.packageDetails?.pricing?.double || inquiry.packageDetails?.pricing?.triple || inquiry.packageDetails?.pricing?.quad || '0',
+      };
+
+      try {
+        const booking = await Booking.create(bookingData);
+        // Link inquiry to booking if needed (optional - you can add inquiryId to Booking model later)
+        inquiry.status = 'in-progress';
+      } catch (bookingError) {
+        console.error("Error creating booking:", bookingError);
+        // Continue with assignment even if booking creation fails
+      }
+    }
+
+    // Step 2: Assign inquiry to agent
+    inquiry.assignedAgent = assignedAgent;
+    inquiry.status = inquiry.status === 'pending' ? 'in-progress' : inquiry.status;
+    await inquiry.save();
+
+    // Populate assignedAgent for response
+    await inquiry.populate("assignedAgent", "name email");
+
+    res.json({ 
+      success: true, 
+      message: "Inquiry assigned to agent successfully",
+      data: inquiry 
+    });
+  } catch (error) {
+    console.error("assignInquiryToAgent error:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // Update inquiry
 export const updateInquiry = async (req, res) => {
   try {
@@ -237,10 +314,23 @@ export const updateInquiry = async (req, res) => {
       // Agents can only update status, not assignment
       if (status) inquiry.status = status;
     } else if (req.user.role === "admin") {
-      // Admin can update both status and assignment
+      // Admin can update both status and assignment (but use assignInquiryToAgent endpoint for proper workflow)
       if (status) inquiry.status = status;
       if (assignedAgent !== undefined) {
-        // Allow null/empty to unassign
+        // For direct assignment without booking creation, use this
+        // But recommend using assignInquiryToAgent endpoint instead
+        if (assignedAgent && assignedAgent !== null && assignedAgent !== '') {
+          // Verify agent exists in either User or Agent model
+          const { default: User } = await import("../models/User.js");
+          const { default: Agent } = await import("../models/Agent.js");
+          
+          const userAgent = await User.findById(assignedAgent);
+          const agentDoc = await Agent.findById(assignedAgent);
+          
+          if (!userAgent && !agentDoc) {
+            return res.status(400).json({ success: false, message: "Agent not found" });
+          }
+        }
         inquiry.assignedAgent = assignedAgent || null;
       }
     }
