@@ -22,13 +22,20 @@ router.post("/create", createInquiry);
 
 // Role-based access
 router.get("/", protect, getInquiries);
-router.get("/:id", protect, getInquiryById);
-router.put("/:id", protect, updateInquiry);
-router.post("/:id/respond", protect, addResponse);
-router.post("/:id/assign", protect, authorizeRoles("admin"), assignInquiryToAgent); // Assign inquiry and create booking
-router.delete("/:id", protect, authorizeRoles("admin"), deleteInquiry);
+
+// IMPORTANT: Specific routes must come BEFORE parameterized routes (/:id)
+// Otherwise Express will match /:id first and treat "assign" as an ID
 
 // Manual forward webhook (secured via X-Api-Key header)
 router.post("/:id/forward-webhook", manualForwardInquiryWebhook);
+
+// Specific action routes
+router.post("/:id/respond", protect, addResponse);
+router.post("/:id/assign", protect, authorizeRoles("admin"), assignInquiryToAgent); // Assign inquiry and create booking
+
+// Generic routes (must come last)
+router.get("/:id", protect, getInquiryById);
+router.put("/:id", protect, updateInquiry);
+router.delete("/:id", protect, authorizeRoles("admin"), deleteInquiry);
 
 export default router;
