@@ -241,7 +241,7 @@ export const getInquiryById = async (req, res) => {
 // Assign inquiry to agent and create booking entry
 export const assignInquiryToAgent = async (req, res) => {
   try {
-    const { assignedAgent, createBooking } = req.body;
+    const { assignedAgent, createBooking, inquiryData } = req.body;
     
     // Only admin can assign inquiries
     if (req.user.role !== "admin") {
@@ -264,10 +264,32 @@ export const assignInquiryToAgent = async (req, res) => {
       inquiry = await Inquiry.findOne({ externalId: req.params.id }).populate("assignedAgent", "name email");
     }
     
-    // If still not found, the inquiry might only exist in the external PostgreSQL system
-    // In this case, we should return an error asking to sync the inquiry first
-    // OR we could create a minimal inquiry record, but that's not recommended
-    // as we'd be missing customer data
+    // If still not found and we have inquiryData, create the inquiry in MongoDB
+    if (!inquiry && inquiryData) {
+      try {
+        inquiry = new Inquiry({
+          externalId: inquiryData.externalId || req.params.id,
+          customerName: inquiryData.customerName,
+          customerEmail: inquiryData.customerEmail,
+          customerPhone: inquiryData.customerPhone || '',
+          message: inquiryData.message || '',
+          packageDetails: inquiryData.packageDetails || null,
+          status: 'pending',
+        });
+        await inquiry.save();
+        console.log(`Created inquiry in MongoDB with externalId: ${req.params.id}`);
+        // Populate assignedAgent for consistent response format
+        await inquiry.populate("assignedAgent", "name email");
+      } catch (createError) {
+        console.error("Error creating inquiry from external data:", createError);
+        return res.status(500).json({ 
+          success: false, 
+          message: "Failed to create inquiry in MongoDB. Please ensure all required fields are provided." 
+        });
+      }
+    }
+    
+    // If still not found and no inquiryData provided, return error
     if (!inquiry) {
       return res.status(404).json({ 
         success: false, 
