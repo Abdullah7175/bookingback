@@ -1,6 +1,7 @@
 import Inquiry from "../models/Inquiry.js";
 import crypto from "crypto";
 import superagent from "superagent";
+import mongoose from "mongoose";
 
 // Helper to build webhook payload in the expected shape
 const buildWebhookBody = (inq) => {
@@ -94,6 +95,9 @@ export const createInquiry = async (req, res) => {
       customerName,
       customerEmail,
       customerPhone,
+      // External ID from PostgreSQL system (optional)
+      externalId,
+      id, // Also accept 'id' field as external ID
       // Package details fields (optional)
       package_name,
       packageName,
@@ -157,6 +161,8 @@ export const createInquiry = async (req, res) => {
     }
 
     const inquiry = new Inquiry({
+      // Store external ID from PostgreSQL system if provided
+      externalId: externalId || id || undefined,
       customerName: customerName || name,
       customerEmail: customerEmail || email,
       customerPhone: customerPhone || phone,
@@ -206,7 +212,13 @@ export const getInquiries = async (req, res) => {
 // Get inquiry by ID
 export const getInquiryById = async (req, res) => {
   try {
-    const inquiry = await Inquiry.findById(req.params.id).populate("assignedAgent", "name email");
+    // Try to find by MongoDB _id first, then try externalId
+    let inquiry = await Inquiry.findById(req.params.id).populate("assignedAgent", "name email");
+    
+    // If not found by _id, try finding by externalId (for backward compatibility)
+    if (!inquiry) {
+      inquiry = await Inquiry.findOne({ externalId: req.params.id }).populate("assignedAgent", "name email");
+    }
 
     if (!inquiry) return res.status(404).json({ success: false, message: "Inquiry not found" });
 
@@ -226,7 +238,14 @@ export const getInquiryById = async (req, res) => {
 export const assignInquiryToAgent = async (req, res) => {
   try {
     const { assignedAgent, createBooking } = req.body;
-    const inquiry = await Inquiry.findById(req.params.id).populate("assignedAgent", "name email");
+    
+    // Try to find by MongoDB _id first, then try externalId
+    let inquiry = await Inquiry.findById(req.params.id).populate("assignedAgent", "name email");
+    
+    // If not found by _id, try finding by externalId (for backward compatibility)
+    if (!inquiry) {
+      inquiry = await Inquiry.findOne({ externalId: req.params.id }).populate("assignedAgent", "name email");
+    }
     
     if (!inquiry) {
       return res.status(404).json({ success: false, message: "Inquiry not found" });
@@ -303,7 +322,15 @@ export const assignInquiryToAgent = async (req, res) => {
 export const updateInquiry = async (req, res) => {
   try {
     const { status, assignedAgent } = req.body;
-    const inquiry = await Inquiry.findById(req.params.id);
+    
+    // Try to find by MongoDB _id first, then try externalId
+    let inquiry = await Inquiry.findById(req.params.id);
+    
+    // If not found by _id, try finding by externalId (for backward compatibility)
+    if (!inquiry) {
+      inquiry = await Inquiry.findOne({ externalId: req.params.id });
+    }
+    
     if (!inquiry) return res.status(404).json({ success: false, message: "Inquiry not found" });
 
     // Agents can update only their assigned inquiries (status only)
@@ -347,7 +374,15 @@ export const updateInquiry = async (req, res) => {
 export const addResponse = async (req, res) => {
   try {
     const { message } = req.body;
-    const inquiry = await Inquiry.findById(req.params.id);
+    
+    // Try to find by MongoDB _id first, then try externalId
+    let inquiry = await Inquiry.findById(req.params.id);
+    
+    // If not found by _id, try finding by externalId (for backward compatibility)
+    if (!inquiry) {
+      inquiry = await Inquiry.findOne({ externalId: req.params.id });
+    }
+    
     if (!inquiry) return res.status(404).json({ success: false, message: "Inquiry not found" });
 
     inquiry.responses.push({ message, responder: req.user._id });
@@ -362,8 +397,17 @@ export const addResponse = async (req, res) => {
 // Delete inquiry (Admin only)
 export const deleteInquiry = async (req, res) => {
   try {
-    const inquiry = await Inquiry.findByIdAndDelete(req.params.id);
+    // Try to find by MongoDB _id first, then try externalId
+    let inquiry = await Inquiry.findById(req.params.id);
+    
+    // If not found by _id, try finding by externalId (for backward compatibility)
+    if (!inquiry) {
+      inquiry = await Inquiry.findOne({ externalId: req.params.id });
+    }
+    
     if (!inquiry) return res.status(404).json({ success: false, message: "Inquiry not found" });
+    
+    await inquiry.deleteOne();
 
     res.json({ success: true, message: "Inquiry deleted successfully" });
   } catch (error) {
@@ -380,7 +424,14 @@ export const manualForwardInquiryWebhook = async (req, res) => {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const inquiry = await Inquiry.findById(req.params.id);
+    // Try to find by MongoDB _id first, then try externalId
+    let inquiry = await Inquiry.findById(req.params.id);
+    
+    // If not found by _id, try finding by externalId (for backward compatibility)
+    if (!inquiry) {
+      inquiry = await Inquiry.findOne({ externalId: req.params.id });
+    }
+    
     if (!inquiry) return res.status(404).json({ error: "Inquiry not found" });
 
     const result = await forwardInquiryWebhook(inquiry);

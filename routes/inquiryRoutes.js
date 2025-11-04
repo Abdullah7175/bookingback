@@ -29,9 +29,10 @@ router.get("/", protect, getInquiries);
 // Manual forward webhook (secured via X-Api-Key header)
 router.post("/:id/forward-webhook", manualForwardInquiryWebhook);
 
-// Specific action routes
+// Specific action routes (must come before generic /:id routes)
 router.post("/:id/respond", protect, addResponse);
-router.post("/:id/assign", protect, authorizeRoles("admin"), assignInquiryToAgent); // Assign inquiry and create booking
+// Assign inquiry to agent (creates booking entry first)
+router.post("/:id/assign", protect, authorizeRoles("admin"), assignInquiryToAgent);
 
 // Generic routes (must come last)
 router.get("/:id", protect, getInquiryById);

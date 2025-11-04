@@ -12,6 +12,9 @@ const responseSchema = new mongoose.Schema(
 
 const inquirySchema = new mongoose.Schema(
   {
+    // External ID from PostgreSQL system (optional - for inquiries coming from external portal)
+    externalId: { type: String, index: true, sparse: true },
+    
     customerName: { type: String, required: true },
     customerEmail: { type: String, required: true },
     customerPhone: { type: String },
