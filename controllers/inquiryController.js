@@ -3,14 +3,54 @@ import crypto from "crypto";
 import superagent from "superagent";
 
 // Helper to build webhook payload in the expected shape
-const buildWebhookBody = (inq) => ({
-  id: inq._id?.toString?.() || String(inq.id || ""),
-  name: inq.customerName || inq.name || "",
-  email: inq.customerEmail || inq.email || "",
-  phone: inq.customerPhone || inq.phone || "",
-  message: inq.message || "",
-  created_at: (inq.createdAt instanceof Date ? inq.createdAt : new Date(inq.createdAt || Date.now())).toISOString(),
-});
+const buildWebhookBody = (inq) => {
+  const basePayload = {
+    id: inq._id?.toString?.() || String(inq.id || ""),
+    name: inq.customerName || inq.name || "",
+    email: inq.customerEmail || inq.email || "",
+    phone: inq.customerPhone || inq.phone || "",
+    message: inq.message || "",
+    created_at: (inq.createdAt instanceof Date ? inq.createdAt : new Date(inq.createdAt || Date.now())).toISOString(),
+  };
+
+  // Add package_details if package details exist
+  if (inq.packageDetails && inq.packageDetails.packageName) {
+    const pkg = inq.packageDetails;
+    basePayload.package_details = {
+      package_name: pkg.packageName,
+      pricing: {
+        double: pkg.pricing?.double || null,
+        triple: pkg.pricing?.triple || null,
+        quad: pkg.pricing?.quad || null,
+        currency: pkg.pricing?.currency || 'USD',
+      },
+      duration: {
+        nights_makkah: pkg.duration?.nightsMakkah || null,
+        nights_madina: pkg.duration?.nightsMadina || null,
+        total_nights: pkg.duration?.totalNights || null,
+      },
+      hotels: {
+        makkah: pkg.hotels?.makkah || null,
+        madina: pkg.hotels?.madina || null,
+      },
+      services: {
+        transportation: pkg.services?.transportation || null,
+        visa: pkg.services?.visa || null,
+      },
+      inclusions: {
+        breakfast: pkg.inclusions?.breakfast || false,
+        dinner: pkg.inclusions?.dinner || false,
+        visa: pkg.inclusions?.visa || false,
+        ticket: pkg.inclusions?.ticket || false,
+        roundtrip: pkg.inclusions?.roundtrip || false,
+        ziyarat: pkg.inclusions?.ziyarat || false,
+        guide: pkg.inclusions?.guide || false,
+      },
+    };
+  }
+
+  return basePayload;
+};
 
 // Send signed webhook (best-effort)
 export const forwardInquiryWebhook = async (inquiry) => {
@@ -54,13 +94,74 @@ export const createInquiry = async (req, res) => {
       customerName,
       customerEmail,
       customerPhone,
+      // Package details fields (optional)
+      package_name,
+      packageName,
+      price_double,
+      price_triple,
+      price_quad,
+      currency,
+      nights_makkah,
+      nights_madina,
+      total_nights,
+      hotel_makkah,
+      hotel_madina,
+      transportation,
+      visa_service,
+      breakfast,
+      dinner,
+      visa_included,
+      ticket,
+      roundtrip,
+      ziyarat,
+      guide,
+      // Package details object (alternative format)
+      package_details,
     } = req.body;
+
+    // Build package details if any package fields are provided
+    let packageDetails = null;
+    if (package_details || package_name || packageName) {
+      const pkg = package_details || {};
+      packageDetails = {
+        packageName: packageName || package_name || pkg.package_name || null,
+        pricing: {
+          double: price_double || pkg.pricing?.double || null,
+          triple: price_triple || pkg.pricing?.triple || null,
+          quad: price_quad || pkg.pricing?.quad || null,
+          currency: currency || pkg.pricing?.currency || 'USD',
+        },
+        duration: {
+          nightsMakkah: nights_makkah || pkg.duration?.nights_makkah || null,
+          nightsMadina: nights_madina || pkg.duration?.nights_madina || null,
+          totalNights: total_nights || pkg.duration?.total_nights || null,
+        },
+        hotels: {
+          makkah: hotel_makkah || pkg.hotels?.makkah || null,
+          madina: hotel_madina || pkg.hotels?.madina || null,
+        },
+        services: {
+          transportation: transportation || pkg.services?.transportation || null,
+          visa: visa_service || pkg.services?.visa || null,
+        },
+        inclusions: {
+          breakfast: breakfast !== undefined ? Boolean(breakfast) : (pkg.inclusions?.breakfast || false),
+          dinner: dinner !== undefined ? Boolean(dinner) : (pkg.inclusions?.dinner || false),
+          visa: visa_included !== undefined ? Boolean(visa_included) : (pkg.inclusions?.visa || false),
+          ticket: ticket !== undefined ? Boolean(ticket) : (pkg.inclusions?.ticket || false),
+          roundtrip: roundtrip !== undefined ? Boolean(roundtrip) : (pkg.inclusions?.roundtrip || false),
+          ziyarat: ziyarat !== undefined ? Boolean(ziyarat) : (pkg.inclusions?.ziyarat || false),
+          guide: guide !== undefined ? Boolean(guide) : (pkg.inclusions?.guide || false),
+        },
+      };
+    }
 
     const inquiry = new Inquiry({
       customerName: customerName || name,
       customerEmail: customerEmail || email,
       customerPhone: customerPhone || phone,
       message,
+      packageDetails: packageDetails,
     });
     await inquiry.save();
 
@@ -83,14 +184,13 @@ export const getInquiries = async (req, res) => {
   try {
     let filter = {};
     if (req.user.role === "agent") {
-      // Agents can see inquiries assigned to them (in User or Agent model)
+      // Agents can ONLY see inquiries assigned to them
+      // Check both User and Agent models for assignedAgent
       filter = { 
-        $or: [
-          { assignedAgent: req.user._id },
-          // Also check for inquiries created by this agent (if inquiry has a creator field)
-        ]
+        assignedAgent: req.user._id
       };
     }
+    // Admin sees all inquiries (no filter)
 
     const inquiries = await Inquiry.find(filter)
       .populate("assignedAgent", "name email")
@@ -129,13 +229,21 @@ export const updateInquiry = async (req, res) => {
     const inquiry = await Inquiry.findById(req.params.id);
     if (!inquiry) return res.status(404).json({ success: false, message: "Inquiry not found" });
 
-    // Agents can update only their inquiries
-    if (req.user.role === "agent" && inquiry.assignedAgent?.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ success: false, message: "Forbidden" });
+    // Agents can update only their assigned inquiries (status only)
+    if (req.user.role === "agent") {
+      if (inquiry.assignedAgent?.toString() !== req.user._id.toString()) {
+        return res.status(403).json({ success: false, message: "Forbidden" });
+      }
+      // Agents can only update status, not assignment
+      if (status) inquiry.status = status;
+    } else if (req.user.role === "admin") {
+      // Admin can update both status and assignment
+      if (status) inquiry.status = status;
+      if (assignedAgent !== undefined) {
+        // Allow null/empty to unassign
+        inquiry.assignedAgent = assignedAgent || null;
+      }
     }
-
-    if (status) inquiry.status = status;
-    if (assignedAgent && req.user.role === "admin") inquiry.assignedAgent = assignedAgent;
 
     await inquiry.save();
     res.json({ success: true, data: inquiry });

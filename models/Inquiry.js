@@ -23,6 +23,39 @@ const inquirySchema = new mongoose.Schema(
     },
     assignedAgent: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     responses: [responseSchema],
+    
+    // Package details fields (optional - only for package-specific inquiries)
+    packageDetails: {
+      packageName: String,
+      pricing: {
+        double: String,
+        triple: String,
+        quad: String,
+        currency: String,
+      },
+      duration: {
+        nightsMakkah: String,
+        nightsMadina: String,
+        totalNights: String,
+      },
+      hotels: {
+        makkah: String,
+        madina: String,
+      },
+      services: {
+        transportation: String,
+        visa: String,
+      },
+      inclusions: {
+        breakfast: Boolean,
+        dinner: Boolean,
+        visa: Boolean,
+        ticket: Boolean,
+        roundtrip: Boolean,
+        ziyarat: Boolean,
+        guide: Boolean,
+      },
+    },
   },
   { timestamps: true }
 );
