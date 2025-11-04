@@ -212,10 +212,14 @@ export const getInquiries = async (req, res) => {
 // Get inquiry by ID
 export const getInquiryById = async (req, res) => {
   try {
-    // Try to find by MongoDB _id first, then try externalId
-    let inquiry = await Inquiry.findById(req.params.id).populate("assignedAgent", "name email");
+    // Check if ID is a valid MongoDB ObjectId - if not, it's likely an externalId
+    let inquiry = null;
+    if (mongoose.Types.ObjectId.isValid(req.params.id) && req.params.id.length === 24) {
+      // Try to find by MongoDB _id first
+      inquiry = await Inquiry.findById(req.params.id).populate("assignedAgent", "name email");
+    }
     
-    // If not found by _id, try finding by externalId (for backward compatibility)
+    // If not found by _id (or ID wasn't a valid ObjectId), try finding by externalId
     if (!inquiry) {
       inquiry = await Inquiry.findOne({ externalId: req.params.id }).populate("assignedAgent", "name email");
     }
@@ -239,18 +243,6 @@ export const assignInquiryToAgent = async (req, res) => {
   try {
     const { assignedAgent, createBooking } = req.body;
     
-    // Try to find by MongoDB _id first, then try externalId
-    let inquiry = await Inquiry.findById(req.params.id).populate("assignedAgent", "name email");
-    
-    // If not found by _id, try finding by externalId (for backward compatibility)
-    if (!inquiry) {
-      inquiry = await Inquiry.findOne({ externalId: req.params.id }).populate("assignedAgent", "name email");
-    }
-    
-    if (!inquiry) {
-      return res.status(404).json({ success: false, message: "Inquiry not found" });
-    }
-
     // Only admin can assign inquiries
     if (req.user.role !== "admin") {
       return res.status(403).json({ success: false, message: "Only admins can assign inquiries" });
@@ -258,6 +250,29 @@ export const assignInquiryToAgent = async (req, res) => {
 
     if (!assignedAgent || assignedAgent === '' || assignedAgent === null) {
       return res.status(400).json({ success: false, message: "Agent ID is required" });
+    }
+
+    // Check if ID is a valid MongoDB ObjectId - if not, it's likely an externalId
+    let inquiry = null;
+    if (mongoose.Types.ObjectId.isValid(req.params.id) && req.params.id.length === 24) {
+      // Try to find by MongoDB _id first
+      inquiry = await Inquiry.findById(req.params.id).populate("assignedAgent", "name email");
+    }
+    
+    // If not found by _id (or ID wasn't a valid ObjectId), try finding by externalId
+    if (!inquiry) {
+      inquiry = await Inquiry.findOne({ externalId: req.params.id }).populate("assignedAgent", "name email");
+    }
+    
+    // If still not found, the inquiry might only exist in the external PostgreSQL system
+    // In this case, we should return an error asking to sync the inquiry first
+    // OR we could create a minimal inquiry record, but that's not recommended
+    // as we'd be missing customer data
+    if (!inquiry) {
+      return res.status(404).json({ 
+        success: false, 
+        message: `Inquiry not found in MongoDB. The inquiry with ID "${req.params.id}" may need to be synced from the external system first.` 
+      });
     }
 
     // Verify agent exists in either User or Agent model
@@ -273,28 +288,34 @@ export const assignInquiryToAgent = async (req, res) => {
 
     // Step 1: Create booking entry if createBooking is true (default behavior)
     if (createBooking !== false) {
-      const { default: Booking } = await import("../models/Booking.js");
-      
-      // Create booking from inquiry data
-      const bookingData = {
-        customerName: inquiry.customerName,
-        customerEmail: inquiry.customerEmail,
-        contactNumber: inquiry.customerPhone || '',
-        package: inquiry.packageDetails?.packageName || 'Inquiry Package',
-        date: new Date(),
-        status: 'pending',
-        approvalStatus: 'pending',
-        agent: assignedAgent,
-        // Include package details if available
-        packagePrice: inquiry.packageDetails?.pricing?.double || inquiry.packageDetails?.pricing?.triple || inquiry.packageDetails?.pricing?.quad || '0',
-      };
-
       try {
+        const { default: Booking } = await import("../models/Booking.js");
+        
+        // Create booking from inquiry data
+        const bookingData = {
+          customerName: inquiry.customerName,
+          customerEmail: inquiry.customerEmail,
+          contactNumber: inquiry.customerPhone || '',
+          package: inquiry.packageDetails?.packageName || 'Inquiry Package',
+          date: new Date(),
+          status: 'pending',
+          approvalStatus: 'pending',
+          agent: assignedAgent,
+          // Include package details if available
+          packagePrice: inquiry.packageDetails?.pricing?.double || inquiry.packageDetails?.pricing?.triple || inquiry.packageDetails?.pricing?.quad || '0',
+        };
+
         const booking = await Booking.create(bookingData);
+        console.log("Booking created successfully:", booking._id);
         // Link inquiry to booking if needed (optional - you can add inquiryId to Booking model later)
         inquiry.status = 'in-progress';
       } catch (bookingError) {
         console.error("Error creating booking:", bookingError);
+        console.error("Booking error details:", {
+          message: bookingError.message,
+          stack: bookingError.stack,
+          name: bookingError.name
+        });
         // Continue with assignment even if booking creation fails
       }
     }
@@ -305,7 +326,12 @@ export const assignInquiryToAgent = async (req, res) => {
     await inquiry.save();
 
     // Populate assignedAgent for response
-    await inquiry.populate("assignedAgent", "name email");
+    try {
+      await inquiry.populate("assignedAgent", "name email");
+    } catch (populateError) {
+      console.warn("Could not populate assignedAgent:", populateError);
+      // Continue without population
+    }
 
     res.json({ 
       success: true, 
@@ -314,7 +340,18 @@ export const assignInquiryToAgent = async (req, res) => {
     });
   } catch (error) {
     console.error("assignInquiryToAgent error:", error);
-    res.status(500).json({ success: false, message: error.message });
+    console.error("Error details:", {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      paramsId: req.params.id,
+      assignedAgent: req.body.assignedAgent
+    });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || "Internal server error",
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
 
@@ -323,10 +360,14 @@ export const updateInquiry = async (req, res) => {
   try {
     const { status, assignedAgent } = req.body;
     
-    // Try to find by MongoDB _id first, then try externalId
-    let inquiry = await Inquiry.findById(req.params.id);
+    // Check if ID is a valid MongoDB ObjectId - if not, it's likely an externalId
+    let inquiry = null;
+    if (mongoose.Types.ObjectId.isValid(req.params.id) && req.params.id.length === 24) {
+      // Try to find by MongoDB _id first
+      inquiry = await Inquiry.findById(req.params.id);
+    }
     
-    // If not found by _id, try finding by externalId (for backward compatibility)
+    // If not found by _id (or ID wasn't a valid ObjectId), try finding by externalId
     if (!inquiry) {
       inquiry = await Inquiry.findOne({ externalId: req.params.id });
     }
@@ -375,10 +416,14 @@ export const addResponse = async (req, res) => {
   try {
     const { message } = req.body;
     
-    // Try to find by MongoDB _id first, then try externalId
-    let inquiry = await Inquiry.findById(req.params.id);
+    // Check if ID is a valid MongoDB ObjectId - if not, it's likely an externalId
+    let inquiry = null;
+    if (mongoose.Types.ObjectId.isValid(req.params.id) && req.params.id.length === 24) {
+      // Try to find by MongoDB _id first
+      inquiry = await Inquiry.findById(req.params.id);
+    }
     
-    // If not found by _id, try finding by externalId (for backward compatibility)
+    // If not found by _id (or ID wasn't a valid ObjectId), try finding by externalId
     if (!inquiry) {
       inquiry = await Inquiry.findOne({ externalId: req.params.id });
     }
@@ -397,10 +442,14 @@ export const addResponse = async (req, res) => {
 // Delete inquiry (Admin only)
 export const deleteInquiry = async (req, res) => {
   try {
-    // Try to find by MongoDB _id first, then try externalId
-    let inquiry = await Inquiry.findById(req.params.id);
+    // Check if ID is a valid MongoDB ObjectId - if not, it's likely an externalId
+    let inquiry = null;
+    if (mongoose.Types.ObjectId.isValid(req.params.id) && req.params.id.length === 24) {
+      // Try to find by MongoDB _id first
+      inquiry = await Inquiry.findById(req.params.id);
+    }
     
-    // If not found by _id, try finding by externalId (for backward compatibility)
+    // If not found by _id (or ID wasn't a valid ObjectId), try finding by externalId
     if (!inquiry) {
       inquiry = await Inquiry.findOne({ externalId: req.params.id });
     }
@@ -424,10 +473,14 @@ export const manualForwardInquiryWebhook = async (req, res) => {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    // Try to find by MongoDB _id first, then try externalId
-    let inquiry = await Inquiry.findById(req.params.id);
+    // Check if ID is a valid MongoDB ObjectId - if not, it's likely an externalId
+    let inquiry = null;
+    if (mongoose.Types.ObjectId.isValid(req.params.id) && req.params.id.length === 24) {
+      // Try to find by MongoDB _id first
+      inquiry = await Inquiry.findById(req.params.id);
+    }
     
-    // If not found by _id, try finding by externalId (for backward compatibility)
+    // If not found by _id (or ID wasn't a valid ObjectId), try finding by externalId
     if (!inquiry) {
       inquiry = await Inquiry.findOne({ externalId: req.params.id });
     }
