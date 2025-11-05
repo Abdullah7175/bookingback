@@ -21,7 +21,7 @@ const inquirySchema = new mongoose.Schema(
     message: { type: String, required: true },
     status: {
       type: String,
-      enum: ["pending", "in-progress", "resolved"],
+      enum: ["pending", "in-progress", "resolved", "closed", "responded"],
       default: "pending",
     },
     assignedAgent: { type: mongoose.Schema.Types.ObjectId, ref: "User" },

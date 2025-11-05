@@ -185,6 +185,49 @@ export const createInquiry = async (req, res) => {
   }
 };
 
+// Helper function to fetch external inquiries (optional - only if API is configured)
+const fetchExternalInquiries = async () => {
+  const externalApiUrl = process.env.EXTERNAL_INQUIRIES_API_URL;
+  if (!externalApiUrl) {
+    return []; // Return empty array if not configured
+  }
+
+  try {
+    const response = await superagent
+      .get(externalApiUrl)
+      .timeout({ response: 5000, deadline: 10000 }); // 5s response, 10s total
+    
+    const data = response.body;
+    // Handle different response formats
+    const externalInquiries = Array.isArray(data) 
+      ? data 
+      : Array.isArray(data?.data) 
+        ? data.data 
+        : Array.isArray(data?.inquiries)
+          ? data.inquiries
+          : [];
+    
+    // Filter to only unassigned inquiries and map to our format
+    return externalInquiries
+      .filter((inq) => !inq.assignedAgent && !inq.assigned_agent && !inq.agentId)
+      .map((inq) => ({
+        externalId: String(inq.id || inq.externalId || ''),
+        customerName: inq.name || inq.customerName || inq.customer_name || '',
+        customerEmail: inq.email || inq.customerEmail || inq.customer_email || '',
+        customerPhone: inq.phone || inq.customerPhone || inq.customer_phone || '',
+        message: inq.message || inq.inquiry || '',
+        status: inq.status || 'pending',
+        packageDetails: inq.package_details || inq.packageDetails || null,
+        createdAt: inq.created_at || inq.createdAt || new Date(),
+        // Mark as external (not in MongoDB yet)
+        _isExternal: true,
+      }));
+  } catch (error) {
+    console.warn('Failed to fetch external inquiries:', error.message);
+    return []; // Return empty array on error
+  }
+};
+
 // Get all inquiries (Admin sees all, Agent sees only theirs)
 export const getInquiries = async (req, res) => {
   try {
@@ -229,7 +272,28 @@ export const getInquiries = async (req, res) => {
       return inquiryObj;
     }));
 
-    res.json({ success: true, data: populatedInquiries });
+    // For admins only: try to fetch and merge external unassigned inquiries
+    let allInquiries = populatedInquiries;
+    if (req.user.role === "admin") {
+      const externalInquiries = await fetchExternalInquiries();
+      
+      // Create a Set of externalIds we already have in MongoDB
+      const existingExternalIds = new Set(
+        populatedInquiries
+          .map((inq) => inq.externalId)
+          .filter((id) => id)
+      );
+      
+      // Only include external inquiries that don't exist in MongoDB yet
+      const newExternalInquiries = externalInquiries.filter(
+        (inq) => !existingExternalIds.has(inq.externalId)
+      );
+      
+      // Merge: MongoDB inquiries first, then external inquiries
+      allInquiries = [...populatedInquiries, ...newExternalInquiries];
+    }
+
+    res.json({ success: true, data: allInquiries });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: error.message });
@@ -471,7 +535,9 @@ export const updateInquiry = async (req, res) => {
     
     // Check if ID is a valid MongoDB ObjectId - if not, it's likely an externalId
     let inquiry = null;
-    if (mongoose.Types.ObjectId.isValid(req.params.id) && req.params.id.length === 24) {
+    const isMongoObjectId = mongoose.Types.ObjectId.isValid(req.params.id) && req.params.id.length === 24;
+    
+    if (isMongoObjectId) {
       // Try to find by MongoDB _id first
       inquiry = await Inquiry.findById(req.params.id);
     }
@@ -485,14 +551,20 @@ export const updateInquiry = async (req, res) => {
 
     // Agents can update only their assigned inquiries (status only)
     if (req.user.role === "agent") {
-      if (inquiry.assignedAgent?.toString() !== req.user._id.toString()) {
+      const assignedAgentId = inquiry.assignedAgent?.toString();
+      if (assignedAgentId !== req.user._id.toString()) {
         return res.status(403).json({ success: false, message: "Forbidden" });
       }
       // Agents can only update status, not assignment
-      if (status) inquiry.status = status;
+      if (status) {
+        // Map frontend status to backend status if needed
+        inquiry.status = status;
+      }
     } else if (req.user.role === "admin") {
       // Admin can update both status and assignment (but use assignInquiryToAgent endpoint for proper workflow)
-      if (status) inquiry.status = status;
+      if (status) {
+        inquiry.status = status;
+      }
       if (assignedAgent !== undefined) {
         // For direct assignment without booking creation, use this
         // But recommend using assignInquiryToAgent endpoint instead
@@ -513,10 +585,37 @@ export const updateInquiry = async (req, res) => {
     }
 
     await inquiry.save();
-    res.json({ success: true, data: inquiry });
+    
+    // Convert to plain object and populate assignedAgent for response
+    const inquiryObj = inquiry.toObject ? inquiry.toObject() : inquiry;
+    
+    // Manually populate assignedAgent from both User and Agent models if it exists
+    if (inquiryObj.assignedAgent) {
+      const { default: User } = await import("../models/User.js");
+      const { default: Agent } = await import("../models/Agent.js");
+      
+      const agentId = inquiryObj.assignedAgent.toString();
+      const userAgent = await User.findById(agentId).select("name email").lean();
+      const agentDoc = await Agent.findById(agentId).select("name email").lean();
+      
+      if (userAgent) {
+        inquiryObj.assignedAgent = userAgent;
+      } else if (agentDoc) {
+        inquiryObj.assignedAgent = agentDoc;
+      }
+    }
+    
+    res.json({ success: true, data: inquiryObj });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, message: error.message });
+    console.error("updateInquiry error:", error);
+    console.error("Error details:", {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      paramsId: req.params.id,
+      status: req.body.status
+    });
+    res.status(500).json({ success: false, message: error.message || "Internal server error" });
   }
 };
 
