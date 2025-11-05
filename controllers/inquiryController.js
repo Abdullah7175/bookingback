@@ -235,6 +235,14 @@ const fetchExternalInquiries = async () => {
     
     console.log(`Fetched ${externalInquiries.length} inquiries from external API`);
     
+    // Log a sample inquiry to debug structure (only first one with package data)
+    if (externalInquiries.length > 0) {
+      const sampleWithPackage = externalInquiries.find(inq => inq.package_name || inq.packageName || inq.price_double || inq.price_triple);
+      if (sampleWithPackage) {
+        console.log('Sample external inquiry with package data:', JSON.stringify(sampleWithPackage, null, 2));
+      }
+    }
+    
     // Map all inquiries to our format (we'll filter assigned ones later)
     return externalInquiries.map((inq) => {
       const externalId = String(inq.id || inq.externalId || inq.inquiry_id || '');
@@ -242,9 +250,12 @@ const fetchExternalInquiries = async () => {
       const message = inq.message || inq.inquiry || inq.subject || inq.description || '';
       
       // Normalize package details structure
+      // Check for nested package_details first, then check for flat fields at top level
       let packageDetails = null;
       const pkg = inq.package_details || inq.packageDetails;
-      if (pkg) {
+      
+      // Check if package details exist in nested structure
+      if (pkg && typeof pkg === 'object') {
         packageDetails = {
           packageName: pkg.packageName || pkg.package_name || null,
           pricing: {
@@ -274,6 +285,45 @@ const fetchExternalInquiries = async () => {
             roundtrip: Boolean(pkg.inclusions?.roundtrip || pkg.roundtrip || false),
             ziyarat: Boolean(pkg.inclusions?.ziyarat || pkg.ziyarat || false),
             guide: Boolean(pkg.inclusions?.guide || pkg.guide || false),
+          },
+        };
+        // Only include if packageName exists
+        if (!packageDetails.packageName) {
+          packageDetails = null;
+        }
+      }
+      
+      // If no nested package details, check for flat fields at top level of inquiry object
+      if (!packageDetails && (inq.package_name || inq.packageName || inq.price_double || inq.price_triple || inq.price_quad)) {
+        packageDetails = {
+          packageName: inq.package_name || inq.packageName || null,
+          pricing: {
+            double: inq.price_double || inq.priceDouble || null,
+            triple: inq.price_triple || inq.priceTriple || null,
+            quad: inq.price_quad || inq.priceQuad || null,
+            currency: inq.currency || 'USD',
+          },
+          duration: {
+            nightsMakkah: inq.nights_makkah || inq.nightsMakkah || inq.nightsMakkahNights || null,
+            nightsMadina: inq.nights_madina || inq.nightsMadina || inq.nightsMadinaNights || null,
+            totalNights: inq.total_nights || inq.totalNights || inq.totalNightsNights || null,
+          },
+          hotels: {
+            makkah: inq.hotel_makkah || inq.hotelMakkah || inq.makkahHotel || null,
+            madina: inq.hotel_madina || inq.hotelMadina || inq.madinaHotel || null,
+          },
+          services: {
+            transportation: inq.transportation || inq.transportationTitle || null,
+            visa: inq.visa_service || inq.visaService || inq.visaTitle || null,
+          },
+          inclusions: {
+            breakfast: Boolean(inq.breakfast === 1 || inq.breakfast === '1' || inq.breakfast === true),
+            dinner: Boolean(inq.dinner === 1 || inq.dinner === '1' || inq.dinner === true),
+            visa: Boolean(inq.visa_included === 1 || inq.visa_included === '1' || inq.visa_included === true || inq.visa === 1 || inq.visa === '1' || inq.visa === true),
+            ticket: Boolean(inq.ticket === 1 || inq.ticket === '1' || inq.ticket === true),
+            roundtrip: Boolean(inq.roundtrip === 1 || inq.roundtrip === '1' || inq.roundtrip === true),
+            ziyarat: Boolean(inq.ziyarat === 1 || inq.ziyarat === '1' || inq.ziyarat === true),
+            guide: Boolean(inq.guide === 1 || inq.guide === '1' || inq.guide === true),
           },
         };
         // Only include if packageName exists
