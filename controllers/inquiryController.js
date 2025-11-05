@@ -236,20 +236,37 @@ const fetchExternalInquiries = async () => {
     console.log(`Fetched ${externalInquiries.length} inquiries from external API`);
     
     // Map all inquiries to our format (we'll filter assigned ones later)
-    return externalInquiries.map((inq) => ({
-      externalId: String(inq.id || inq.externalId || inq.inquiry_id || ''),
-      customerName: inq.name || inq.customerName || inq.customer_name || inq.customer || '',
-      customerEmail: inq.email || inq.customerEmail || inq.customer_email || '',
-      customerPhone: inq.phone || inq.customerPhone || inq.customer_phone || inq.contact || '',
-      message: inq.message || inq.inquiry || inq.subject || inq.description || '',
-      status: inq.status || 'pending',
-      packageDetails: inq.package_details || inq.packageDetails || null,
-      createdAt: inq.created_at || inq.createdAt || inq.date_created || new Date(),
-      // Mark as external (not in MongoDB yet)
-      _isExternal: true,
-      // Don't include assignedAgent from external API - we'll check MongoDB for that
-      assignedAgent: null,
-    }));
+    return externalInquiries.map((inq) => {
+      const externalId = String(inq.id || inq.externalId || inq.inquiry_id || '');
+      const customerName = inq.name || inq.customerName || inq.customer_name || inq.customer || '';
+      const message = inq.message || inq.inquiry || inq.subject || inq.description || '';
+      
+      return {
+        // Set id to externalId for frontend compatibility (frontend uses id as primary key)
+        id: externalId,
+        externalId: externalId,
+        // Map to both customerName and name for frontend compatibility
+        name: customerName,
+        customerName: customerName,
+        // Map to both email and customerEmail for frontend compatibility
+        email: inq.email || inq.customerEmail || inq.customer_email || '',
+        customerEmail: inq.email || inq.customerEmail || inq.customer_email || '',
+        // Map to both phone and customerPhone for frontend compatibility
+        phone: inq.phone || inq.customerPhone || inq.customer_phone || inq.contact || '',
+        customerPhone: inq.phone || inq.customerPhone || inq.customer_phone || inq.contact || '',
+        // Map subject field (use first part of message or a default)
+        subject: inq.subject || (message.length > 50 ? message.substring(0, 50) + '...' : message) || '(No subject)',
+        message: message,
+        status: inq.status || 'pending',
+        priority: inq.priority || 'low',
+        packageDetails: inq.package_details || inq.packageDetails || null,
+        createdAt: inq.created_at || inq.createdAt || inq.date_created || new Date(),
+        // Mark as external (not in MongoDB yet)
+        _isExternal: true,
+        // Don't include assignedAgent from external API - we'll check MongoDB for that
+        assignedAgent: null,
+      };
+    });
   } catch (error) {
     console.error('Failed to fetch external inquiries:', error.message);
     if (error.response) {
@@ -288,6 +305,39 @@ export const getInquiries = async (req, res) => {
       // Convert to plain object to ensure proper JSON serialization
       const inquiryObj = inquiry.toObject ? inquiry.toObject() : inquiry;
       
+      // Ensure id field is set (frontend uses id as primary key)
+      if (!inquiryObj.id && inquiryObj._id) {
+        inquiryObj.id = inquiryObj._id.toString();
+      }
+      
+      // Ensure name field is set for frontend compatibility (maps from customerName)
+      if (!inquiryObj.name && inquiryObj.customerName) {
+        inquiryObj.name = inquiryObj.customerName;
+      }
+      
+      // Ensure email field is set for frontend compatibility (maps from customerEmail)
+      if (!inquiryObj.email && inquiryObj.customerEmail) {
+        inquiryObj.email = inquiryObj.customerEmail;
+      }
+      
+      // Ensure phone field is set for frontend compatibility (maps from customerPhone)
+      if (!inquiryObj.phone && inquiryObj.customerPhone) {
+        inquiryObj.phone = inquiryObj.customerPhone;
+      }
+      
+      // Ensure subject field is set (use first part of message or a default)
+      if (!inquiryObj.subject && inquiryObj.message) {
+        const msg = String(inquiryObj.message);
+        inquiryObj.subject = msg.length > 50 ? msg.substring(0, 50) + '...' : msg;
+      } else if (!inquiryObj.subject) {
+        inquiryObj.subject = '(No subject)';
+      }
+      
+      // Ensure priority field is set
+      if (!inquiryObj.priority) {
+        inquiryObj.priority = 'low';
+      }
+      
       if (inquiryObj.assignedAgent) {
         const agentId = inquiryObj.assignedAgent.toString();
         const userAgent = await User.findById(agentId).select("name email").lean();
@@ -314,19 +364,38 @@ export const getInquiries = async (req, res) => {
       const externalInquiries = await fetchExternalInquiries();
       
       // Create a Set of externalIds we already have in MongoDB (these are assigned)
-      const existingExternalIds = new Set(
-        populatedMongoInquiries
-          .map((inq) => inq.externalId)
-          .filter((id) => id && id.trim() !== '')
-      );
+      // Also check the id field in case externalId is not set
+      const existingExternalIds = new Set();
+      populatedMongoInquiries.forEach((inq) => {
+        if (inq.externalId && inq.externalId.trim() !== '') {
+          existingExternalIds.add(String(inq.externalId).trim());
+        }
+        // Also add the id if it's not a MongoDB ObjectId (24 hex chars)
+        if (inq.id && !/^[0-9a-fA-F]{24}$/.test(String(inq.id))) {
+          existingExternalIds.add(String(inq.id).trim());
+        }
+      });
       
-      console.log(`Found ${existingExternalIds.size} inquiries already in MongoDB (assigned)`);
+      console.log(`Found ${existingExternalIds.size} unique external IDs already in MongoDB (assigned)`);
       console.log(`Found ${externalInquiries.length} total inquiries from external API`);
       
+      if (externalInquiries.length > 0) {
+        console.log(`Sample external inquiry IDs:`, externalInquiries.slice(0, 3).map(inq => inq.id || inq.externalId));
+      }
+      
       // Filter external inquiries to only include those NOT in MongoDB (unassigned)
-      const unassignedExternalInquiries = externalInquiries.filter(
-        (inq) => inq.externalId && !existingExternalIds.has(inq.externalId)
-      );
+      const unassignedExternalInquiries = externalInquiries.filter((inq) => {
+        const extId = inq.externalId || inq.id;
+        if (!extId) {
+          console.warn('External inquiry missing externalId and id:', inq);
+          return false; // Skip inquiries without IDs
+        }
+        const isAssigned = existingExternalIds.has(String(extId).trim());
+        if (isAssigned) {
+          console.log(`External inquiry ${extId} is already assigned (in MongoDB)`);
+        }
+        return !isAssigned;
+      });
       
       console.log(`Filtered to ${unassignedExternalInquiries.length} unassigned inquiries from external API`);
       
