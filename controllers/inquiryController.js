@@ -241,6 +241,47 @@ const fetchExternalInquiries = async () => {
       const customerName = inq.name || inq.customerName || inq.customer_name || inq.customer || '';
       const message = inq.message || inq.inquiry || inq.subject || inq.description || '';
       
+      // Normalize package details structure
+      let packageDetails = null;
+      const pkg = inq.package_details || inq.packageDetails;
+      if (pkg) {
+        packageDetails = {
+          packageName: pkg.packageName || pkg.package_name || null,
+          pricing: {
+            double: pkg.pricing?.double || pkg.price_double || null,
+            triple: pkg.pricing?.triple || pkg.price_triple || null,
+            quad: pkg.pricing?.quad || pkg.price_quad || null,
+            currency: pkg.pricing?.currency || pkg.currency || 'USD',
+          },
+          duration: {
+            nightsMakkah: pkg.duration?.nightsMakkah || pkg.duration?.nights_makkah || pkg.nights_makkah || null,
+            nightsMadina: pkg.duration?.nightsMadina || pkg.duration?.nights_madina || pkg.nights_madina || null,
+            totalNights: pkg.duration?.totalNights || pkg.duration?.total_nights || pkg.total_nights || null,
+          },
+          hotels: {
+            makkah: pkg.hotels?.makkah || pkg.hotel_makkah || null,
+            madina: pkg.hotels?.madina || pkg.hotel_madina || null,
+          },
+          services: {
+            transportation: pkg.services?.transportation || pkg.transportation || null,
+            visa: pkg.services?.visa || pkg.visa_service || null,
+          },
+          inclusions: {
+            breakfast: Boolean(pkg.inclusions?.breakfast || pkg.breakfast || false),
+            dinner: Boolean(pkg.inclusions?.dinner || pkg.dinner || false),
+            visa: Boolean(pkg.inclusions?.visa || pkg.visa_included || false),
+            ticket: Boolean(pkg.inclusions?.ticket || pkg.ticket || false),
+            roundtrip: Boolean(pkg.inclusions?.roundtrip || pkg.roundtrip || false),
+            ziyarat: Boolean(pkg.inclusions?.ziyarat || pkg.ziyarat || false),
+            guide: Boolean(pkg.inclusions?.guide || pkg.guide || false),
+          },
+        };
+        // Only include if packageName exists
+        if (!packageDetails.packageName) {
+          packageDetails = null;
+        }
+      }
+      
       return {
         // Set id to externalId for frontend compatibility (frontend uses id as primary key)
         id: externalId,
@@ -259,7 +300,7 @@ const fetchExternalInquiries = async () => {
         message: message,
         status: inq.status || 'pending',
         priority: inq.priority || 'low',
-        packageDetails: inq.package_details || inq.packageDetails || null,
+        packageDetails: packageDetails,
         createdAt: inq.created_at || inq.createdAt || inq.date_created || new Date(),
         // Mark as external (not in MongoDB yet)
         _isExternal: true,
@@ -336,6 +377,48 @@ export const getInquiries = async (req, res) => {
       // Ensure priority field is set
       if (!inquiryObj.priority) {
         inquiryObj.priority = 'low';
+      }
+      
+      // Ensure packageDetails is preserved and properly structured
+      if (inquiryObj.packageDetails) {
+        // PackageDetails already exists, ensure it's properly structured
+        inquiryObj.packageDetails = inquiryObj.packageDetails;
+      } else {
+        // If no packageDetails but we have flat package fields, try to construct it
+        // This might happen if data was stored in flat format
+        if (inquiryObj.packageName || inquiryObj.package_name) {
+          inquiryObj.packageDetails = {
+            packageName: inquiryObj.packageName || inquiryObj.package_name || null,
+            pricing: {
+              double: inquiryObj.price_double || null,
+              triple: inquiryObj.price_triple || null,
+              quad: inquiryObj.price_quad || null,
+              currency: inquiryObj.currency || 'USD',
+            },
+            duration: {
+              nightsMakkah: inquiryObj.nights_makkah || null,
+              nightsMadina: inquiryObj.nights_madina || null,
+              totalNights: inquiryObj.total_nights || null,
+            },
+            hotels: {
+              makkah: inquiryObj.hotel_makkah || null,
+              madina: inquiryObj.hotel_madina || null,
+            },
+            services: {
+              transportation: inquiryObj.transportation || null,
+              visa: inquiryObj.visa_service || null,
+            },
+            inclusions: {
+              breakfast: inquiryObj.breakfast || false,
+              dinner: inquiryObj.dinner || false,
+              visa: inquiryObj.visa_included || false,
+              ticket: inquiryObj.ticket || false,
+              roundtrip: inquiryObj.roundtrip || false,
+              ziyarat: inquiryObj.ziyarat || false,
+              guide: inquiryObj.guide || false,
+            },
+          };
+        }
       }
       
       if (inquiryObj.assignedAgent) {
