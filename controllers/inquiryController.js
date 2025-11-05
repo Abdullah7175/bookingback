@@ -185,45 +185,79 @@ export const createInquiry = async (req, res) => {
   }
 };
 
-// Helper function to fetch external inquiries (optional - only if API is configured)
+// Helper function to fetch external inquiries from mtumrah API
 const fetchExternalInquiries = async () => {
-  const externalApiUrl = process.env.EXTERNAL_INQUIRIES_API_URL;
-  if (!externalApiUrl) {
-    return []; // Return empty array if not configured
-  }
-
+  // Try to get the API URL from environment or default to mtumrah.com
+  const externalApiUrl = process.env.EXTERNAL_INQUIRIES_API_URL || 
+    process.env.MTUMRAH_API_URL || 
+    'https://www.mtumrah.com/api/inquiries';
+  
+  console.log(`Attempting to fetch external inquiries from: ${externalApiUrl}`);
+  
   try {
-    const response = await superagent
-      .get(externalApiUrl)
-      .timeout({ response: 5000, deadline: 10000 }); // 5s response, 10s total
+    // Build request with optional authentication
+    let request = superagent.get(externalApiUrl);
+    
+    // Add API key if configured
+    if (process.env.EXTERNAL_API_KEY) {
+      request = request.set('X-Api-Key', process.env.EXTERNAL_API_KEY);
+      console.log('Using X-Api-Key header');
+    }
+    
+    // Add authorization header if configured
+    if (process.env.EXTERNAL_API_TOKEN) {
+      request = request.set('Authorization', `Bearer ${process.env.EXTERNAL_API_TOKEN}`);
+      console.log('Using Bearer token authorization');
+    }
+    
+    const response = await request
+      .timeout({ response: 10000, deadline: 15000 }) // 10s response, 15s total
+      .retry(2); // Retry up to 2 times on failure
+    
+    console.log(`External API response status: ${response.status}`);
+    console.log(`External API response type: ${typeof response.body}`);
     
     const data = response.body;
-    // Handle different response formats
-    const externalInquiries = Array.isArray(data) 
-      ? data 
-      : Array.isArray(data?.data) 
-        ? data.data 
-        : Array.isArray(data?.inquiries)
-          ? data.inquiries
-          : [];
     
-    // Filter to only unassigned inquiries and map to our format
-    return externalInquiries
-      .filter((inq) => !inq.assignedAgent && !inq.assigned_agent && !inq.agentId)
-      .map((inq) => ({
-        externalId: String(inq.id || inq.externalId || ''),
-        customerName: inq.name || inq.customerName || inq.customer_name || '',
-        customerEmail: inq.email || inq.customerEmail || inq.customer_email || '',
-        customerPhone: inq.phone || inq.customerPhone || inq.customer_phone || '',
-        message: inq.message || inq.inquiry || '',
-        status: inq.status || 'pending',
-        packageDetails: inq.package_details || inq.packageDetails || null,
-        createdAt: inq.created_at || inq.createdAt || new Date(),
-        // Mark as external (not in MongoDB yet)
-        _isExternal: true,
-      }));
+    // Handle different response formats
+    let externalInquiries = [];
+    if (Array.isArray(data)) {
+      externalInquiries = data;
+    } else if (data && Array.isArray(data.data)) {
+      externalInquiries = data.data;
+    } else if (data && Array.isArray(data.inquiries)) {
+      externalInquiries = data.inquiries;
+    } else if (data && data.result && Array.isArray(data.result)) {
+      externalInquiries = data.result;
+    } else {
+      console.warn('Unexpected external API response format:', JSON.stringify(data).substring(0, 200));
+    }
+    
+    console.log(`Fetched ${externalInquiries.length} inquiries from external API`);
+    
+    // Map all inquiries to our format (we'll filter assigned ones later)
+    return externalInquiries.map((inq) => ({
+      externalId: String(inq.id || inq.externalId || inq.inquiry_id || ''),
+      customerName: inq.name || inq.customerName || inq.customer_name || inq.customer || '',
+      customerEmail: inq.email || inq.customerEmail || inq.customer_email || '',
+      customerPhone: inq.phone || inq.customerPhone || inq.customer_phone || inq.contact || '',
+      message: inq.message || inq.inquiry || inq.subject || inq.description || '',
+      status: inq.status || 'pending',
+      packageDetails: inq.package_details || inq.packageDetails || null,
+      createdAt: inq.created_at || inq.createdAt || inq.date_created || new Date(),
+      // Mark as external (not in MongoDB yet)
+      _isExternal: true,
+      // Don't include assignedAgent from external API - we'll check MongoDB for that
+      assignedAgent: null,
+    }));
   } catch (error) {
-    console.warn('Failed to fetch external inquiries:', error.message);
+    console.error('Failed to fetch external inquiries:', error.message);
+    if (error.response) {
+      console.error('Error status:', error.response.status);
+      console.error('Error body:', JSON.stringify(error.response.body).substring(0, 500));
+    } else if (error.request) {
+      console.error('No response received from external API');
+    }
     return []; // Return empty array on error
   }
 };
@@ -231,24 +265,26 @@ const fetchExternalInquiries = async () => {
 // Get all inquiries (Admin sees all, Agent sees only theirs)
 export const getInquiries = async (req, res) => {
   try {
-    let filter = {};
+    // MongoDB only contains ASSIGNED inquiries (they're saved when assigned)
+    // So we fetch assigned inquiries from MongoDB
+    let mongoFilter = {
+      assignedAgent: { $exists: true, $ne: null } // Only inquiries with assigned agents
+    };
+    
     if (req.user.role === "agent") {
       // Agents can ONLY see inquiries assigned to them
-      // Check both User and Agent models for assignedAgent
-      filter = { 
-        assignedAgent: req.user._id
-      };
+      mongoFilter.assignedAgent = req.user._id;
     }
-    // Admin sees all inquiries (no filter)
+    // Admin sees all assigned inquiries from MongoDB (no additional filter)
 
-    const inquiries = await Inquiry.find(filter)
+    const mongoInquiries = await Inquiry.find(mongoFilter)
       .sort({ createdAt: -1 }); // latest first
 
     // Manually populate assignedAgent from both User and Agent models
     const { default: User } = await import("../models/User.js");
     const { default: Agent } = await import("../models/Agent.js");
     
-    const populatedInquiries = await Promise.all(inquiries.map(async (inquiry) => {
+    const populatedMongoInquiries = await Promise.all(mongoInquiries.map(async (inquiry) => {
       // Convert to plain object to ensure proper JSON serialization
       const inquiryObj = inquiry.toObject ? inquiry.toObject() : inquiry;
       
@@ -272,30 +308,37 @@ export const getInquiries = async (req, res) => {
       return inquiryObj;
     }));
 
-    // For admins only: try to fetch and merge external unassigned inquiries
-    let allInquiries = populatedInquiries;
+    // For admins: fetch ALL inquiries from external API, merge with assigned ones from MongoDB
+    let allInquiries = populatedMongoInquiries;
     if (req.user.role === "admin") {
       const externalInquiries = await fetchExternalInquiries();
       
-      // Create a Set of externalIds we already have in MongoDB
+      // Create a Set of externalIds we already have in MongoDB (these are assigned)
       const existingExternalIds = new Set(
-        populatedInquiries
+        populatedMongoInquiries
           .map((inq) => inq.externalId)
-          .filter((id) => id)
+          .filter((id) => id && id.trim() !== '')
       );
       
-      // Only include external inquiries that don't exist in MongoDB yet
-      const newExternalInquiries = externalInquiries.filter(
-        (inq) => !existingExternalIds.has(inq.externalId)
+      console.log(`Found ${existingExternalIds.size} inquiries already in MongoDB (assigned)`);
+      console.log(`Found ${externalInquiries.length} total inquiries from external API`);
+      
+      // Filter external inquiries to only include those NOT in MongoDB (unassigned)
+      const unassignedExternalInquiries = externalInquiries.filter(
+        (inq) => inq.externalId && !existingExternalIds.has(inq.externalId)
       );
       
-      // Merge: MongoDB inquiries first, then external inquiries
-      allInquiries = [...populatedInquiries, ...newExternalInquiries];
+      console.log(`Filtered to ${unassignedExternalInquiries.length} unassigned inquiries from external API`);
+      
+      // Merge: Unassigned external inquiries first, then assigned MongoDB inquiries
+      allInquiries = [...unassignedExternalInquiries, ...populatedMongoInquiries];
+      
+      console.log(`Returning ${unassignedExternalInquiries.length} unassigned (external) + ${populatedMongoInquiries.length} assigned (MongoDB) = ${allInquiries.length} total inquiries`);
     }
 
     res.json({ success: true, data: allInquiries });
   } catch (error) {
-    console.error(error);
+    console.error('getInquiries error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
