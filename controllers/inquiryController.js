@@ -206,18 +206,27 @@ export const getInquiries = async (req, res) => {
     const { default: Agent } = await import("../models/Agent.js");
     
     const populatedInquiries = await Promise.all(inquiries.map(async (inquiry) => {
-      if (inquiry.assignedAgent) {
-        const agentId = inquiry.assignedAgent.toString();
+      // Convert to plain object to ensure proper JSON serialization
+      const inquiryObj = inquiry.toObject ? inquiry.toObject() : inquiry;
+      
+      if (inquiryObj.assignedAgent) {
+        const agentId = inquiryObj.assignedAgent.toString();
         const userAgent = await User.findById(agentId).select("name email").lean();
         const agentDoc = await Agent.findById(agentId).select("name email").lean();
         
         if (userAgent) {
-          inquiry.assignedAgent = userAgent;
+          inquiryObj.assignedAgent = userAgent;
         } else if (agentDoc) {
-          inquiry.assignedAgent = agentDoc;
+          inquiryObj.assignedAgent = agentDoc;
         }
       }
-      return inquiry;
+      
+      // Ensure externalId is included if present
+      if (inquiryObj.externalId) {
+        inquiryObj.externalId = inquiryObj.externalId;
+      }
+      
+      return inquiryObj;
     }));
 
     res.json({ success: true, data: populatedInquiries });
@@ -410,24 +419,34 @@ export const assignInquiryToAgent = async (req, res) => {
       const userAgent = await User.findById(agentId).select("name email").lean();
       const agentDoc = await Agent.findById(agentId).select("name email").lean();
       
+      // Convert inquiry to plain object for proper JSON serialization
+      const inquiryObj = inquiry.toObject ? inquiry.toObject() : inquiry;
+      
       if (userAgent) {
-        inquiry.assignedAgent = userAgent;
+        inquiryObj.assignedAgent = userAgent;
       } else if (agentDoc) {
-        inquiry.assignedAgent = agentDoc;
+        inquiryObj.assignedAgent = agentDoc;
       } else {
-        // If not found in either, keep as ObjectId
+        // If not found in either, keep as ObjectId string
+        inquiryObj.assignedAgent = agentId;
         console.warn(`Agent ${agentId} not found in User or Agent models`);
       }
+      
+      res.json({ 
+        success: true, 
+        message: "Inquiry assigned to agent successfully",
+        data: inquiryObj 
+      });
     } catch (populateError) {
       console.warn("Could not populate assignedAgent:", populateError);
-      // Continue without population
+      // Continue without population, but still convert to plain object
+      const inquiryObj = inquiry.toObject ? inquiry.toObject() : inquiry;
+      res.json({ 
+        success: true, 
+        message: "Inquiry assigned to agent successfully",
+        data: inquiryObj 
+      });
     }
-
-    res.json({ 
-      success: true, 
-      message: "Inquiry assigned to agent successfully",
-      data: inquiry 
-    });
   } catch (error) {
     console.error("assignInquiryToAgent error:", error);
     console.error("Error details:", {
@@ -587,3 +606,4 @@ export const manualForwardInquiryWebhook = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
