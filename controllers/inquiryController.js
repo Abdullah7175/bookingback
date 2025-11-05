@@ -199,10 +199,28 @@ export const getInquiries = async (req, res) => {
     // Admin sees all inquiries (no filter)
 
     const inquiries = await Inquiry.find(filter)
-      .populate("assignedAgent", "name email")
       .sort({ createdAt: -1 }); // latest first
 
-    res.json({ success: true, data: inquiries });
+    // Manually populate assignedAgent from both User and Agent models
+    const { default: User } = await import("../models/User.js");
+    const { default: Agent } = await import("../models/Agent.js");
+    
+    const populatedInquiries = await Promise.all(inquiries.map(async (inquiry) => {
+      if (inquiry.assignedAgent) {
+        const agentId = inquiry.assignedAgent.toString();
+        const userAgent = await User.findById(agentId).select("name email").lean();
+        const agentDoc = await Agent.findById(agentId).select("name email").lean();
+        
+        if (userAgent) {
+          inquiry.assignedAgent = userAgent;
+        } else if (agentDoc) {
+          inquiry.assignedAgent = agentDoc;
+        }
+      }
+      return inquiry;
+    }));
+
+    res.json({ success: true, data: populatedInquiries });
   } catch (error) {
     console.error(error);
     res.status(500).json({ success: false, message: error.message });
@@ -214,20 +232,39 @@ export const getInquiryById = async (req, res) => {
   try {
     // Check if ID is a valid MongoDB ObjectId - if not, it's likely an externalId
     let inquiry = null;
-    if (mongoose.Types.ObjectId.isValid(req.params.id) && req.params.id.length === 24) {
+    const isMongoObjectId = mongoose.Types.ObjectId.isValid(req.params.id) && req.params.id.length === 24;
+    
+    if (isMongoObjectId) {
       // Try to find by MongoDB _id first
-      inquiry = await Inquiry.findById(req.params.id).populate("assignedAgent", "name email");
+      inquiry = await Inquiry.findById(req.params.id);
     }
     
     // If not found by _id (or ID wasn't a valid ObjectId), try finding by externalId
     if (!inquiry) {
-      inquiry = await Inquiry.findOne({ externalId: req.params.id }).populate("assignedAgent", "name email");
+      inquiry = await Inquiry.findOne({ externalId: req.params.id });
     }
 
     if (!inquiry) return res.status(404).json({ success: false, message: "Inquiry not found" });
 
+    // Manually populate assignedAgent from both User and Agent models
+    if (inquiry.assignedAgent) {
+      const { default: User } = await import("../models/User.js");
+      const { default: Agent } = await import("../models/Agent.js");
+      
+      const agentId = inquiry.assignedAgent.toString();
+      const userAgent = await User.findById(agentId).select("name email").lean();
+      const agentDoc = await Agent.findById(agentId).select("name email").lean();
+      
+      if (userAgent) {
+        inquiry.assignedAgent = userAgent;
+      } else if (agentDoc) {
+        inquiry.assignedAgent = agentDoc;
+      }
+    }
+
     // Agents can see only their inquiries
-    if (req.user.role === "agent" && inquiry.assignedAgent?._id.toString() !== req.user._id.toString()) {
+    const assignedAgentId = inquiry.assignedAgent?._id?.toString() || inquiry.assignedAgent?.toString();
+    if (req.user.role === "agent" && assignedAgentId !== req.user._id.toString()) {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }
 
@@ -254,14 +291,32 @@ export const assignInquiryToAgent = async (req, res) => {
 
     // Check if ID is a valid MongoDB ObjectId - if not, it's likely an externalId
     let inquiry = null;
-    if (mongoose.Types.ObjectId.isValid(req.params.id) && req.params.id.length === 24) {
+    const isMongoObjectId = mongoose.Types.ObjectId.isValid(req.params.id) && req.params.id.length === 24;
+    
+    if (isMongoObjectId) {
       // Try to find by MongoDB _id first
-      inquiry = await Inquiry.findById(req.params.id).populate("assignedAgent", "name email");
+      inquiry = await Inquiry.findById(req.params.id);
     }
     
     // If not found by _id (or ID wasn't a valid ObjectId), try finding by externalId
     if (!inquiry) {
-      inquiry = await Inquiry.findOne({ externalId: req.params.id }).populate("assignedAgent", "name email");
+      inquiry = await Inquiry.findOne({ externalId: req.params.id });
+    }
+    
+    // Manually populate assignedAgent from both User and Agent models if it exists
+    if (inquiry && inquiry.assignedAgent) {
+      const { default: User } = await import("../models/User.js");
+      const { default: Agent } = await import("../models/Agent.js");
+      
+      const agentId = inquiry.assignedAgent.toString();
+      const userAgent = await User.findById(agentId).select("name email").lean();
+      const agentDoc = await Agent.findById(agentId).select("name email").lean();
+      
+      if (userAgent) {
+        inquiry.assignedAgent = userAgent;
+      } else if (agentDoc) {
+        inquiry.assignedAgent = agentDoc;
+      }
     }
     
     // If still not found and we have inquiryData, create the inquiry in MongoDB
@@ -278,8 +333,7 @@ export const assignInquiryToAgent = async (req, res) => {
         });
         await inquiry.save();
         console.log(`Created inquiry in MongoDB with externalId: ${req.params.id}`);
-        // Populate assignedAgent for consistent response format
-        await inquiry.populate("assignedAgent", "name email");
+        // Note: assignedAgent will be populated later after assignment
       } catch (createError) {
         console.error("Error creating inquiry from external data:", createError);
         return res.status(500).json({ 
@@ -347,9 +401,23 @@ export const assignInquiryToAgent = async (req, res) => {
     inquiry.status = inquiry.status === 'pending' ? 'in-progress' : inquiry.status;
     await inquiry.save();
 
-    // Populate assignedAgent for response
+    // Manually populate assignedAgent from both User and Agent models for response
     try {
-      await inquiry.populate("assignedAgent", "name email");
+      const { default: User } = await import("../models/User.js");
+      const { default: Agent } = await import("../models/Agent.js");
+      
+      const agentId = assignedAgent.toString();
+      const userAgent = await User.findById(agentId).select("name email").lean();
+      const agentDoc = await Agent.findById(agentId).select("name email").lean();
+      
+      if (userAgent) {
+        inquiry.assignedAgent = userAgent;
+      } else if (agentDoc) {
+        inquiry.assignedAgent = agentDoc;
+      } else {
+        // If not found in either, keep as ObjectId
+        console.warn(`Agent ${agentId} not found in User or Agent models`);
+      }
     } catch (populateError) {
       console.warn("Could not populate assignedAgent:", populateError);
       // Continue without population
