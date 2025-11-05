@@ -381,12 +381,19 @@ export const getInquiries = async (req, res) => {
     
     if (req.user.role === "agent") {
       // Agents can ONLY see inquiries assigned to them
-      mongoFilter.assignedAgent = req.user._id;
+      // Ensure req.user._id is properly formatted for MongoDB query
+      const agentId = req.user._id?.toString ? req.user._id.toString() : String(req.user._id);
+      mongoFilter.assignedAgent = req.user._id; // Mongoose will handle ObjectId conversion
+      console.log(`Agent filtering inquiries for agent ID: ${agentId}, role: ${req.user.role}`);
+    } else {
+      console.log(`Admin fetching all assigned inquiries`);
     }
     // Admin sees all assigned inquiries from MongoDB (no additional filter)
 
     const mongoInquiries = await Inquiry.find(mongoFilter)
       .sort({ createdAt: -1 }); // latest first
+    
+    console.log(`Found ${mongoInquiries.length} inquiries from MongoDB for ${req.user.role === "agent" ? "agent" : "admin"}`);
 
     // Manually populate assignedAgent from both User and Agent models
     const { default: User } = await import("../models/User.js");
@@ -395,6 +402,13 @@ export const getInquiries = async (req, res) => {
     const populatedMongoInquiries = await Promise.all(mongoInquiries.map(async (inquiry) => {
       // Convert to plain object to ensure proper JSON serialization
       const inquiryObj = inquiry.toObject ? inquiry.toObject() : inquiry;
+      
+      // Debug: Log assignedAgent for agents
+      if (req.user.role === "agent") {
+        const inquiryAgentId = inquiryObj.assignedAgent?.toString ? inquiryObj.assignedAgent.toString() : String(inquiryObj.assignedAgent);
+        const userAgentId = req.user._id?.toString ? req.user._id.toString() : String(req.user._id);
+        console.log(`Inquiry ${inquiryObj._id}: assignedAgent=${inquiryAgentId}, user._id=${userAgentId}, match=${inquiryAgentId === userAgentId}`);
+      }
       
       // Ensure id field is set (frontend uses id as primary key)
       if (!inquiryObj.id && inquiryObj._id) {
